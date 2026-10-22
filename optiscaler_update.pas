@@ -2027,6 +2027,7 @@ var
   ErrMsg: string;
 begin
   Result := False;
+  if Assigned(goverlayform) and goverlayform.IsPrismContext then Exit;
   // Test mode: never open GUI dialogs
   if GetEnvironmentVariable('GOVERLAY_TEST') = '1' then Exit;
 
@@ -2396,6 +2397,7 @@ procedure TOptiscalerTab.CheckForUpdatesOnClick;
 var
   IsStableChannel: Boolean;
 begin
+  if Assigned(goverlayform) and goverlayform.IsPrismContext then Exit;
   // Custom Build has no remote repository or online updates to check on GitHub
   if Assigned(FOptVersionComboBox) and (FOptVersionComboBox.ItemIndex = 2) then
     Exit;
@@ -2687,6 +2689,7 @@ var
   SkipDownloadExtract: Boolean;
   OrigPath: string;
 begin
+  if Assigned(goverlayform) and goverlayform.IsPrismContext then Exit;
   // Test mode: never download updates (deterministic test runs)
   if GetEnvironmentVariable('GOVERLAY_TEST') = '1' then Exit;
 

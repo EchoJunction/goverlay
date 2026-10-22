@@ -5,7 +5,7 @@ unit mangohud_ui;
 interface
 
 uses
-  Classes, SysUtils, process, Forms, Controls, Graphics, Dialogs, ExtCtrls, Math,
+  Classes, SysUtils, goverlay_strings, process, Forms, Controls, Graphics, Dialogs, ExtCtrls, Math,
   StdCtrls, Buttons, Menus, LCLtype, Types, Grids, Spin,
   themeunit, constants, hintsunit, apputils, overlayunit, overlay_config, systemdetector, ComCtrls, overlay_utils,
   {$IFDEF LCLqt6}
@@ -123,6 +123,7 @@ type
     procedure LoadMangoHudBoolFlag(const ATrimmedLine: string);
     procedure LoadMangoHudKeyValue(const AKey, AValue: string);
     procedure SaveMangoHudConfig;
+    function TrySaveMangoHudConfig: Boolean;
     procedure MetricGraphClick(Sender: TObject);
   end;
 
@@ -408,7 +409,8 @@ begin
     Exit;
 
   FTimeFormat := NewFmt;
-  SaveMangoHudConfig;
+  if not TrySaveMangoHudConfig then Exit;
+  if FForm.IsPrismContext then begin FForm.ShowSavedStatus; Exit; end;
 
   WasRunning := IsProcessRunningPure('pascube');
   if WasRunning then
@@ -3357,7 +3359,8 @@ end;
 
 procedure TMangoHudUiHelper.MetricGraphClick(Sender: TObject);
 begin
-  SaveMangoHudConfig;
+  if not TrySaveMangoHudConfig then Exit;
+  if FForm.IsPrismContext then begin FForm.ShowSavedStatus; Exit; end;
   if Assigned(FForm.FFloatingToast) then
     FForm.FFloatingToast.ShowToast('Settings saved');
 end;
@@ -3948,7 +3951,7 @@ begin
     hudtitleEdit.Text := '';
     gpunameEdit.Text := '';
     cpunameEdit.Text := '';
-    logfolderEdit.Text := FForm.GetGameLogDir(FForm.FActiveGameName);
+    logfolderEdit.Text := FForm.ActiveProfileLogDir;
     if Assigned(FFpsLimitEdit) then
       FFpsLimitEdit.Text := '0';
 
@@ -4082,13 +4085,18 @@ var
   Line, TrimmedLine, Key, Value: string;
   i, ColonPos: Integer;
   IntValue: Integer;
+  WasLoading: Boolean;
 begin
+  WasLoading := FForm.FLoadingConfig;
   FForm.FLoadingConfig := True;
   try
     ResetMangoHudControls;
 
     if not FileExists(MANGOHUDCFGFILE) then
+    begin
+      SyncAllToggles; UpdatePresetCardVisuals;
       Exit;
+    end;
 
     ConfigLines := TStringList.Create;
     try
@@ -4154,7 +4162,7 @@ begin
     UpdatePerfCardTheme;
     UpdatePresetCardVisuals;
   finally
-    FForm.FLoadingConfig := False;
+    FForm.FLoadingConfig := WasLoading;
   end;
 end;
 
@@ -4629,7 +4637,9 @@ begin
       deviceCheckBox.Checked := True
     else if SameText(AKey, MANGO_KEY_OUTPUT_FOLDER) then
     begin
-      if (AValue = '') or
+      if FForm.IsPrismContext then
+        logfolderEdit.Text := FForm.ActiveProfileLogDir
+      else if (AValue = '') or
          SameText(ExcludeTrailingPathDelimiter(AValue),
                   ExcludeTrailingPathDelimiter(GetGOverlayDataDir())) or
          ((FForm.FActiveGameName <> '') and
@@ -4640,7 +4650,7 @@ begin
         logfolderEdit.Text := FForm.GetGameLogDir(FForm.FActiveGameName)
       else
         logfolderEdit.Text := AValue;
-      if (logfolderEdit.Text <> '') and not DirectoryExists(logfolderEdit.Text) then
+      if not FForm.IsPrismContext and (logfolderEdit.Text <> '') and not DirectoryExists(logfolderEdit.Text) then
         try ForceDirectories(logfolderEdit.Text); except end;
     end
     else if SameText(AKey, MANGO_KEY_LOG_DURATION) then
@@ -4754,6 +4764,11 @@ begin
 end;
 
 procedure TMangoHudUiHelper.SaveMangoHudConfig;
+begin
+  TrySaveMangoHudConfig;
+end;
+
+function TMangoHudUiHelper.TrySaveMangoHudConfig: Boolean;
 var
   Settings: TMangoHudSettings;
   ErrMsg: string;
@@ -4982,9 +4997,27 @@ begin
     Settings.Versioning := versioningCheckBox.Checked;
     Settings.AutoUpload := autouploadCheckBox.Checked;
 
-    if not overlay_config.SaveMangoHudConfigCore(Settings, fontComboBox.Items, ErrMsg) then
+    if IsPrismContext then
     begin
-      if ErrMsg <> '' then
+      Settings.MangoHudCfgFile := ActiveProfileConfigDir + 'MangoHud.conf';
+      Settings.LogFolder := ActiveProfileLogDir;
+      Settings.Winesync := False; Settings.Wine := False;
+      Settings.VkbasaltStatus := False; Settings.Fsr := False;
+      Settings.EngineVersion := False; Settings.EngineShort := False;
+      Settings.DxApi := False; Settings.FexStats := False;
+      Settings.Hdr := False; Settings.Fcat := False;
+    end;
+    try
+      Result := overlay_config.SaveMangoHudConfigCore(Settings, fontComboBox.Items, ErrMsg, IsPrismContext);
+    except
+      on E: Exception do begin Result := False; ErrMsg := E.Message; end;
+    end;
+    FLastProfileSaveSucceeded := Result;
+    FProfileDirty := not Result;
+    if not Result then
+    begin
+      if IsPrismContext then FForm.ShowStatusMessage(rsPrismSaveFailed)
+      else if ErrMsg <> '' then
         FForm.ShowStatusMessage('Error saving MangoHud config: ' + ErrMsg);
     end;
   end;

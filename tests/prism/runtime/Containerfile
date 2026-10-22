@@ -1,0 +1,32 @@
+FROM docker.io/library/archlinux@sha256:dfb01267da058e5d08ffdc543bf484c9b404655b0bac1d0201d972bf950cdfd0 AS runtime
+
+COPY entrypoint.sh /usr/local/bin/prism-runtime
+
+# The base is pinned. Arch packages roll; the runtime report records installed versions.
+RUN pacman -Syu --noconfirm --needed prismlauncher mangohud jre21-openjdk \
+      mesa mesa-utils xorg-server-xvfb xorg-xdpyinfo openbox x11vnc \
+      coreutils procps-ng ttf-dejavu python curl ca-certificates \
+    && pacman -Scc --noconfirm \
+    && curl -fL -o /tmp/novnc.tar.gz https://github.com/novnc/noVNC/archive/refs/tags/v1.6.0.tar.gz \
+    && echo '5066103959ef4e9b10f37e5a148627360dd8414e4cf8a7db92bdbd022e728aaa  /tmp/novnc.tar.gz' | sha256sum -c - \
+    && curl -fL -o /tmp/websockify.tar.gz https://github.com/novnc/websockify/archive/refs/tags/v0.13.0.tar.gz \
+    && echo 'b6413e364efd04f3c92ec8c17747e3c4adc20157c2ef1c5d019a26d944a46df8  /tmp/websockify.tar.gz' | sha256sum -c - \
+    && mkdir /opt/novnc /opt/websockify \
+    && tar -xzf /tmp/novnc.tar.gz --strip-components=1 -C /opt/novnc \
+    && tar -xzf /tmp/websockify.tar.gz --strip-components=1 -C /opt/websockify \
+    && rm /tmp/novnc.tar.gz /tmp/websockify.tar.gz \
+    && useradd --create-home --uid 1000 tester \
+    && chmod 755 /usr/local/bin/prism-runtime
+USER 1000:1000
+ENV HOME=/home/tester DISPLAY=:99 LIBGL_ALWAYS_SOFTWARE=1 QT_X11_NO_MITSHM=1
+WORKDIR /home/tester
+ENTRYPOINT ["/usr/local/bin/prism-runtime"]
+CMD ["smoke"]
+
+# Opt-in source build tools; the default smoke targets the runtime stage above.
+FROM runtime AS editor
+USER root
+RUN pacman -Syu --noconfirm --needed fpc lazarus qt6pas make \
+    && pacman -Scc --noconfirm \
+    && mkdir /build && chown tester:tester /build
+USER 1000:1000

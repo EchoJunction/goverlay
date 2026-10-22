@@ -11,7 +11,7 @@ uses
   fpcunit, testregistry, fpcunitreport, plaintestreport,
   test_isolation,
   overlayunit,
-  gui_test_cases;
+  gui_test_cases, prism_gui_test_cases;
 
 type
   TConsoleListener = class(TInterfacedObject, ITestListener)
