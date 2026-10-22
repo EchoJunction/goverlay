@@ -36,6 +36,19 @@ resourcestring
   rsPrismCardUnavailable = 'Launch unavailable';
   rsPrismSelectedContext = '%s (%s): local profile; Prism launch integration unavailable.';
   rsPrismDiscoveryIssues = 'Prism discovery skipped unsupported or invalid entries (%d).';
+  rsRefreshGameLibrary = 'Refresh game library';
+  rsPrismLocateRoot = 'Locate Prism data directory...';
+  rsPrismManageRoots = 'Manage Prism directories';
+  rsPrismRemoveRoot = 'Remove Prism directory';
+  rsPrismNoRoots = 'No additional Prism directories';
+  rsPrismRootsReadFailed = 'Cannot read saved Prism directories. The original prism_roots.json is preserved; repair or move it aside to continue.';
+  rsPrismRootsWriteFailed = 'Could not save Prism directories. Check access to the GOverlay settings directory.';
+  rsPrismRootInvalid = 'Select a readable Prism data directory containing a supported prismlauncher.cfg. Symlinks and parent traversal are unsupported.';
+  rsPrismRootsLimit = 'Too many additional Prism directories (maximum %d). Remove one before adding another.';
+  rsPrismRootsNotice = 'Prism: %d additional directories. %s';
+  rsPrismRootsUnavailable = '%d saved directories are unavailable; use Manage Prism directories to remove or rescan them.';
+  rsPrismRootsEmpty = 'No games detected. Locate a Prism data directory or use the library menu to add game folders.';
+  rsPrismRootSaveBlocked = 'Pending profile edits could not be saved. Save them before changing or rescanning directories.';
   // Games tab
   rsFolderAlreadyAdded = 'This folder has already been added.';
   rsRemoveFolderTitle = 'Remove non-Steam folder';

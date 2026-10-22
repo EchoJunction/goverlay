@@ -48,6 +48,10 @@ type
   Symlinks are refused, including in every existing ancestor. This is discovery,
   not a filesystem transaction; callers must revalidate before future writes. }
 function DiscoverPrism(const Input: TPrismDiscoveryInput): TPrismDiscoveryResult;
+{ Saved selections may outlive inaccessible/replaced roots. Callers can skip
+  filesystem checks for catalog metadata only; discovery always checks links. }
+function CanonicalPrismPath(const Path: string; out Canonical: string;
+  CheckFilesystem: Boolean = True): Boolean;
 
 implementation
 
@@ -68,7 +72,8 @@ begin
   Result := SHA1Print(SHA1String(S));
 end;
 
-function SafePath(const P: string; out Canonical: string): Boolean;
+function SafePath(const P: string; out Canonical: string;
+  CheckFilesystem: Boolean = True): Boolean;
 var Parts: TStringList; I: Integer; Current: string; St: Stat;
 begin
   Result := False;
@@ -87,6 +92,7 @@ begin
       if Parts[I] = '..' then Exit;
       if (Parts[I] = '') or (Parts[I] = '.') then Continue;
       Current := Current + '/' + Parts[I];
+      if not CheckFilesystem then Continue;
       if fpLStat(PChar(Current), St) = 0 then
       begin
         if FPS_ISLNK(St.st_mode) then Exit;
@@ -99,6 +105,12 @@ begin
   finally
     Parts.Free;
   end;
+end;
+
+function CanonicalPrismPath(const Path: string; out Canonical: string;
+  CheckFilesystem: Boolean): Boolean;
+begin
+  Result := SafePath(Path, Canonical, CheckFilesystem);
 end;
 
 function ReadBounded(const P: string; out S: string;
