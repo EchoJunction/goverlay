@@ -119,3 +119,5 @@ openspec/
 # Test binaries (built by make test)
 tests/gui/gui_tests
 tests/logic/logic_tests
+
+tests/prism/prism_tests
