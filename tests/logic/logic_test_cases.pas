@@ -69,6 +69,20 @@ type
     procedure TestGpuListBothGpus;
   end;
 
+  TMangoHudIsolatedWriterTests = class(TTestCase)
+  private
+    FPaths, FContents: TStringList;
+    FExisted: array of Boolean;
+    procedure ExerciseIsolation(AFpsOnly: Boolean);
+  protected
+    procedure SetUp; override;
+    procedure TearDown; override;
+  published
+    procedure TestFullProfileIsolation;
+    procedure TestFpsOnlyProfileIsolation;
+    procedure TestLegacyMirroringDefault;
+  end;
+
   TClearConfigTests = class(TTestCase)
   published
     procedure TestPreserveNonEmptyBackups;
@@ -160,7 +174,7 @@ type
 implementation
 
 uses
-  themeunit, configfile, configkeys, test_isolation, overlay_config, IniFiles, optiscaler_update, apputils, bgmod_resources, Process, BaseUnix, systemdetector;
+  themeunit, configfile, configkeys, test_isolation, overlay_config, IniFiles, optiscaler_update, apputils, bgmod_resources, Process, BaseUnix, systemdetector, overlay_utils;
 
 procedure TDriverPreferenceTests.TestRoundTrip;
 begin
@@ -1073,6 +1087,172 @@ var
 begin
   InputStr := '03:00.0 VGA compatible controller: Advanced Micro Devices, Inc. [AMD/ATI] Navi 31 [Radeon RX 7900 XT/7900 XTX/7900 GRE/7900M] (rev c8)';
   AssertEquals('Handle full lspci line', 'AMD Radeon RX 7900 XT/7900 XTX/7900 GRE/7900M', ExtractGpuMarketName(InputStr));
+end;
+
+function ReadWriterTestFile(const APath: string): string;
+var
+  Stream: TStringStream;
+begin
+  Stream := TStringStream.Create('');
+  try
+    Stream.LoadFromFile(APath);
+    Result := Stream.DataString;
+  finally
+    Stream.Free;
+  end;
+end;
+
+procedure WriteWriterTestFile(const APath, AContent: string);
+var
+  Stream: TStringStream;
+begin
+  ForceDirectories(ExtractFileDir(APath));
+  Stream := TStringStream.Create(AContent);
+  try
+    Stream.SaveToFile(APath);
+  finally
+    Stream.Free;
+  end;
+end;
+
+procedure TMangoHudIsolatedWriterTests.SetUp;
+var
+  i: Integer;
+begin
+  inherited SetUp;
+  FPaths := TStringList.Create;
+  FContents := TStringList.Create;
+  FPaths.Add(IncludeTrailingPathDelimiter(GetMangoHudConfigDir) + 'MangoHud.conf');
+  FPaths.Add(GetUserDir + '.var/app/com.valvesoftware.Steam/config/MangoHud/MangoHud.conf');
+  FPaths.Add(GetGameConfigDir('Same Java Instance') + 'bgmod.conf');
+  FPaths.Add(GetGameConfigDir('') + 'bgmod.conf');
+  FPaths.Add(GetUserConfigDir + '/goverlay/blacklist.conf');
+  SetLength(FExisted, FPaths.Count);
+  for i := 0 to FPaths.Count - 1 do
+  begin
+    FExisted[i] := FileExists(FPaths[i]);
+    if FExisted[i] then
+      FContents.Add(ReadWriterTestFile(FPaths[i]))
+    else
+      FContents.Add('');
+    WriteWriterTestFile(FPaths[i], 'sentinel-' + IntToStr(i) + #13#10);
+  end;
+end;
+
+procedure TMangoHudIsolatedWriterTests.TearDown;
+var
+  i: Integer;
+begin
+  for i := 0 to FPaths.Count - 1 do
+    if FExisted[i] then
+      WriteWriterTestFile(FPaths[i], FContents[i])
+    else
+      DeleteFile(FPaths[i]);
+  FContents.Free;
+  FPaths.Free;
+  inherited TearDown;
+end;
+
+procedure TMangoHudIsolatedWriterTests.ExerciseIsolation(AFpsOnly: Boolean);
+var
+  Settings: TMangoHudSettings;
+  ErrMsg, ProfileA, ProfileB, ContentA, ContentB, LabelName: string;
+  NameCase, i: Integer;
+begin
+  for NameCase := 0 to 1 do
+  begin
+    if NameCase = 0 then LabelName := 'Same Java Instance' else LabelName := '';
+    Settings := Default(TMangoHudSettings);
+    Settings.ActiveGameName := LabelName;
+    Settings.Version := 'isolation-test';
+    Settings.FpsOnly := AFpsOnly;
+    Settings.LogFolder := IsolatedHome + '/writer-unused-log-' + IntToStr(Ord(AFpsOnly)) + '-' + IntToStr(NameCase);
+    ProfileA := IsolatedHome + '/writer-isolation-' + IntToStr(Ord(AFpsOnly)) + '-' + IntToStr(NameCase) + '/root-a/MangoHud.conf';
+    ProfileB := ExtractFileDir(ExtractFileDir(ProfileA)) + '/root-b/MangoHud.conf';
+    Settings.MangoHudCfgFile := ProfileA;
+    Settings.HudTitle := 'Instance A';
+    AssertTrue('First isolated save: ' + ErrMsg, SaveMangoHudConfigCore(Settings, nil, ErrMsg, True));
+    ContentA := ReadWriterTestFile(ProfileA);
+    Settings.MangoHudCfgFile := ProfileB;
+    Settings.HudTitle := 'Instance B';
+    AssertTrue('Second isolated save: ' + ErrMsg, SaveMangoHudConfigCore(Settings, nil, ErrMsg, True));
+    ContentB := ReadWriterTestFile(ProfileB);
+    AssertEquals('Second profile preserves first exact bytes', ContentA, ReadWriterTestFile(ProfileA));
+    if AFpsOnly then
+    begin
+      AssertEquals('FPS-only output is exact', 'fps_only' + LineEnding, ContentA);
+      AssertEquals('Both FPS-only profiles are generated independently', ContentA, ContentB);
+    end
+    else
+    begin
+      AssertTrue('A contains its title', Pos('Instance A', ContentA) > 0);
+      AssertTrue('B contains its title', Pos('Instance B', ContentB) > 0);
+      AssertTrue('Full outputs differ', ContentA <> ContentB);
+    end;
+    AssertTrue('Repeat isolated save', SaveMangoHudConfigCore(Settings, nil, ErrMsg, True));
+    AssertEquals('Repeat is byte-identical', ContentB, ReadWriterTestFile(ProfileB));
+    Settings.MangoHudCfgFile := ProfileA;
+    Settings.HudTitle := 'Instance A';
+    AssertTrue('Repeat first profile save', SaveMangoHudConfigCore(Settings, nil, ErrMsg, True));
+    AssertEquals('First profile repeat is byte-identical', ContentA, ReadWriterTestFile(ProfileA));
+    AssertEquals('First profile repeat preserves second', ContentB, ReadWriterTestFile(ProfileB));
+    Settings.MangoHudCfgFile := ProfileB;
+    Settings.HudTitle := 'Instance B';
+    AssertFalse('Writer does not create external log directory', DirectoryExists(Settings.LogFolder));
+    for i := 0 to FPaths.Count - 1 do
+      AssertEquals('Unrelated file untouched: ' + FPaths[i], 'sentinel-' + IntToStr(i) + #13#10, ReadWriterTestFile(FPaths[i]));
+  end;
+
+  // An absent blacklist must remain absent even though defaults appear in full output.
+  DeleteFile(FPaths[4]);
+  AssertTrue('Save with absent blacklist', SaveMangoHudConfigCore(Settings, nil, ErrMsg, True));
+  AssertFalse('No global blacklist initialization', FileExists(FPaths[4]));
+  if not AFpsOnly then
+    AssertTrue('Default blacklist still serialized', Pos('blacklist=zenity,protonplus', ReadWriterTestFile(ProfileB)) > 0);
+  WriteWriterTestFile(FPaths[4], 'sentinel-4' + #13#10);
+
+  // Missing wrapper/mirror files must not be deployed on a repeat save either.
+  for i := 0 to 3 do DeleteFile(FPaths[i]);
+  AssertTrue('Save with absent mirrors', SaveMangoHudConfigCore(Settings, nil, ErrMsg, True));
+  for i := 0 to 3 do
+    AssertFalse('No side file created: ' + FPaths[i], FileExists(FPaths[i]));
+end;
+
+procedure TMangoHudIsolatedWriterTests.TestFullProfileIsolation;
+begin
+  ExerciseIsolation(False);
+end;
+
+procedure TMangoHudIsolatedWriterTests.TestFpsOnlyProfileIsolation;
+begin
+  ExerciseIsolation(True);
+end;
+
+procedure TMangoHudIsolatedWriterTests.TestLegacyMirroringDefault;
+var
+  Settings: TMangoHudSettings;
+  ErrMsg, Content: string;
+  Ini: TIniFile;
+  Mode: Integer;
+begin
+  for Mode := 0 to 1 do
+  begin
+    Settings := Default(TMangoHudSettings);
+    Settings.MangoHudCfgFile := IsolatedHome + '/writer-legacy/MangoHud.conf';
+    ForceDirectories(ExtractFileDir(Settings.MangoHudCfgFile));
+    Settings.FpsOnly := Mode = 1;
+    AssertTrue('Three-argument legacy save', SaveMangoHudConfigCore(Settings, nil, ErrMsg));
+    Content := ReadWriterTestFile(Settings.MangoHudCfgFile);
+    AssertEquals('Legacy native mirror retained', Content, ReadWriterTestFile(FPaths[0]));
+    AssertEquals('Legacy Steam mirror retained', Content, ReadWriterTestFile(FPaths[1]));
+    Ini := TIniFile.Create(FPaths[3]);
+    try
+      AssertEquals('Legacy wrapper selector retained', Settings.MangoHudCfgFile,
+        Ini.ReadString('Env', 'MANGOHUD_CONFIGFILE', ''));
+    finally
+      Ini.Free;
+    end;
+  end;
 end;
 
 procedure TMangoHudGpuListTests.TestGpuListSinglePrimary;
@@ -3109,6 +3289,7 @@ initialization
   RegisterTest(TVkBasaltLogicTests);
   RegisterTest(TGpuNameExtractionTests);
   RegisterTest(TMangoHudGpuListTests);
+  RegisterTest(TMangoHudIsolatedWriterTests);
   RegisterTest(TClearConfigTests);
   RegisterTest(TMakoLogicTests);
   RegisterTest(TBgmodSupervisorTests);

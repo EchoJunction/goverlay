@@ -48,6 +48,8 @@ clean:
 	rm -f start_goverlay.sh data/goverlay.sh
 	rm -rf lib/ backup/
 	rm -f *.o *.ppu *.or *.compiled *.dbg *.res
+	rm -f tests/prism/prism_tests
+	rm -rf tests/prism/lib/
 	rm -f tests/logic/logic_tests tests/gui/gui_tests tests/gui/gui_tests.compiled
 	rm -rf tests/logic/lib/ tests/gui/lib/ tests/logic/backup/ tests/gui/backup/
 
@@ -103,7 +105,12 @@ tests:
 	appstreamcli validate --pedantic data/io.github.benjamimgois.goverlay.metainfo.xml
 	desktop-file-validate data/io.github.benjamimgois.goverlay.desktop
 
-test: test-logic test-gui
+test: test-prism test-logic test-gui
+
+test-prism:
+	mkdir -p tests/prism/lib
+	fpc -Fu. -FUtests/prism/lib -FEtests/prism tests/prism/prism_tests.lpr
+	./tests/prism/prism_tests
 
 test-logic: bgmod bgmod-uninstaller bgmod-splash
 	lazbuild tests/logic/logic_tests.lpi $(LAZBUILDOPTS)
@@ -116,4 +123,4 @@ test-gui:
 tarball: goverlay start_goverlay.sh
 	tar -cJf goverlay_${VERSION}.tar.xz goverlay start_goverlay.sh
 
-.PHONY: all data/goverlay.sh start_goverlay.sh clean install uninstall tests test test-logic test-gui tarball
+.PHONY: all data/goverlay.sh start_goverlay.sh clean install uninstall tests test test-prism test-logic test-gui tarball

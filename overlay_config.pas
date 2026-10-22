@@ -295,7 +295,8 @@ function LoadVkBasaltConfig(const CfgFile: string; const AvEffectsList, ActEffec
 function LoadVkSumiConfig(const CfgFile: string; out Settings: TVkSumiSettings): Boolean;
 function LoadOptiScalerConfig(const ActiveGameName: string; out Settings: TOptiScalerSettings): Boolean;
 
-function SaveMangoHudConfigCore(const Settings: TMangoHudSettings; const AvFonts: TStrings; out ErrMsg: string): Boolean;
+// Isolated saves write only the supplied profile, without legacy mirrors or wrappers.
+function SaveMangoHudConfigCore(const Settings: TMangoHudSettings; const AvFonts: TStrings; out ErrMsg: string; AIsolatedProfile: Boolean = False): Boolean;
 procedure EnsureDefaultConfigFiles(const GVersion, GChannel, VkbToggleKeyText: string);
 
 implementation
@@ -2255,7 +2256,7 @@ begin
   Result := Format('%.2x%.2x%.2x', [Red, Green, Blue]); // Formata a string no formato HTML (#RRGGBB)
 end;
 
-function SaveMangoHudConfigCore(const Settings: TMangoHudSettings; const AvFonts: TStrings; out ErrMsg: string): Boolean;
+function SaveMangoHudConfigCore(const Settings: TMangoHudSettings; const AvFonts: TStrings; out ErrMsg: string; AIsolatedProfile: Boolean): Boolean;
 var
   ConfigLines: TStringList;
   ConfigDir, FontPath, FontDir: string;
@@ -2279,7 +2280,7 @@ begin
   Result := False;
   ErrMsg := '';
 
-  if Settings.ActiveGameName <> '' then
+  if AIsolatedProfile or (Settings.ActiveGameName <> '') then
     ConfigDir := ExtractFilePath(Settings.MangoHudCfgFile)
   else
     ConfigDir := TConfigManager.GetMangoHudFolder();
@@ -2287,7 +2288,7 @@ begin
   // Create directory if it doesn't exist
   if not DirectoryExists(ConfigDir) then
   begin
-    if Settings.ActiveGameName <> '' then
+    if AIsolatedProfile or (Settings.ActiveGameName <> '') then
       ForceDirectories(ConfigDir)
     else
       CreateHostDirectory(ConfigDir);
@@ -2297,13 +2298,19 @@ begin
   try
     // ── fps_only preset shortcut ─────────────────────────────────────────────
     // When the fps_only token was loaded from the config file (or the user just
-    // clicked the "FPS Only" preset), write the single-token file and mirror it
-    // to the system-wide locations — identical to what the normal save does —
+    // clicked the "FPS Only" preset), write the single-token file. Legacy saves
+    // also mirror it to shared locations, identical to the normal save,
     // then return immediately without generating a full config from UI state.
     if Settings.FpsOnly then
     begin
       ConfigLines.Add('fps_only');
       ConfigLines.SaveToFile(Settings.MangoHudCfgFile);
+
+      if AIsolatedProfile then
+      begin
+        Result := True;
+        Exit;
+      end;
 
       // Update bgmod.conf so MANGOHUD_CONFIGFILE stays in sync
       FGModFilePath := GetGameConfigDir(Settings.ActiveGameName) + 'bgmod.conf';
@@ -2829,7 +2836,7 @@ begin
     // Log folder (XDG-compliant data directory)
     if Settings.LogFolder <> '' then
     begin
-      if not DirectoryExists(Settings.LogFolder) then
+      if (not AIsolatedProfile) and (not DirectoryExists(Settings.LogFolder)) then
         try ForceDirectories(Settings.LogFolder); except end;
       ConfigLines.Add('output_folder=' + Settings.LogFolder);
     end;
@@ -2872,8 +2879,11 @@ begin
         BlacklistLines.Add('bitwig-studio');
         BlacklistLines.Add('ptyxis');
         BlacklistLines.Add('yumex');
-        ForceDirectories(ExtractFilePath(BlacklistFile));
-        BlacklistLines.SaveToFile(BlacklistFile);
+        if not AIsolatedProfile then
+        begin
+          ForceDirectories(ExtractFilePath(BlacklistFile));
+          BlacklistLines.SaveToFile(BlacklistFile);
+        end;
       end
       else
         BlacklistLines.LoadFromFile(BlacklistFile);
@@ -2891,6 +2901,12 @@ begin
 
     // Save to active config file (game-specific or global)
     ConfigLines.SaveToFile(Settings.MangoHudCfgFile);
+
+    if AIsolatedProfile then
+    begin
+      Result := True;
+      Exit;
+    end;
 
     // Update bgmod.conf: inject MANGOHUD_CONFIGFILE and ensure GOVERLAY_MANGOHUD is set (if not explicitly disabled)
     FGModFilePath := GetGameConfigDir(Settings.ActiveGameName) + 'bgmod.conf';
