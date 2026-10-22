@@ -4,7 +4,7 @@ unit prism_test_cases;
 
 interface
 
-uses Classes, SysUtils, fpcunit, testregistry, prismprovider;
+uses Classes, SysUtils, fpcunit, testregistry, prismprovider, prismroots;
 
 type
   TPrismTests = class(TTestCase)
@@ -21,6 +21,10 @@ type
     procedure SetUp; override;
     procedure TearDown; override;
   published
+    procedure RootsPersistenceRoundTripAndDedup;
+    procedure RootsCorruptStatePreserved;
+    procedure RootsBoundsAndUnsafePaths;
+    procedure RootSelectionValidationAndMissingReload;
     procedure NativeMetadataAndReadonly;
     procedure PinnedQtFixture;
     procedure FlatpakCustomAndDedup;
@@ -372,6 +376,98 @@ begin
   R := Scan;
   AssertEquals(1, Length(R.Instances)); AssertEquals(U2, R.Instances[0].UUID);
   AssertTrue(HasIssue(R, piLimitExceeded));
+end;
+
+procedure TPrismTests.RootsPersistenceRoundTripAndDedup;
+var Roots, Loaded: TPrismRootPaths; FileName, Error, Before: string;
+begin
+  FileName := Base + '/goverlay/prism_roots.json';
+  SetLength(Roots, 4);
+  Roots[0] := Base + '/portable 日本語 "quoted"' + #10 + 'root';
+  Roots[1] := Roots[0] + '/./';
+  Roots[2] := Base + '/Case'; Roots[3] := Base + '/case';
+  Before := Snapshot(Root);
+  AssertTrue(SavePrismRoots(FileName, Roots, Error));
+  AssertTrue(LoadPrismRoots(FileName, Loaded, Error));
+  AssertEquals(3, Length(Loaded)); AssertEquals(Roots[0], Loaded[0]);
+  AssertEquals(Roots[2], Loaded[1]); AssertEquals(Roots[3], Loaded[2]);
+  AssertEquals(Before, Snapshot(Root));
+end;
+
+procedure TPrismTests.RootsCorruptStatePreserved;
+var Roots: TPrismRootPaths; FileName, Error, Before: string; I: Integer;
+const Bad: array[0..9] of string = ('{', '{"version":2,"roots":[]}',
+  '{"version":1,"roots":[7]}', '{"version":1,"roots":["relative"]}',
+  '{"version":1,"roots":[],"extra":true}', '{"version":1,"version":1,"roots":[]}',
+  '{"version":1,"roots":["/tmp/../escape"]}',
+  '{"version":1,"roots":[]}garbage',
+  '{"version":1,"roots":[]} {"extra":2}',
+  '{"version":1,"roots":[]}' + #0 + 'garbage');
+begin
+  FileName := Base + '/goverlay/prism_roots.json';
+  for I := 0 to High(Bad) do
+  begin
+    Put(FileName, Bad[I]); Before := Snapshot(Base + '/goverlay');
+    AssertFalse(LoadPrismRoots(FileName, Roots, Error)); AssertTrue(Error <> '');
+    AssertEquals(0, Length(Roots));
+    AssertFalse(SavePrismRoots(FileName, Roots, Error));
+    AssertEquals(Before, Snapshot(Base + '/goverlay'));
+  end;
+  Put(FileName, ' ' + #9 + '{"version":1,"roots":[]}' + #13 + #10 + ' ');
+  AssertTrue('JSON whitespace is allowed', LoadPrismRoots(FileName, Roots, Error));
+end;
+
+procedure TPrismTests.RootsBoundsAndUnsafePaths;
+var Roots, Loaded: TPrismRootPaths; FileName, Error, Before, C: string; I, Issues: Integer;
+begin
+  FileName := Base + '/goverlay/prism_roots.json';
+  SetLength(Roots, PrismMaxAdditionalRoots);
+  for I := 0 to High(Roots) do Roots[I] := Base + '/portable-' + IntToStr(I);
+  AssertTrue(SavePrismRoots(FileName, Roots, Error));
+  Before := Snapshot(Base + '/goverlay');
+  SetLength(Roots, PrismMaxAdditionalRoots + 1); Roots[High(Roots)] := Base + '/extra';
+  AssertFalse(SavePrismRoots(FileName, Roots, Error));
+  AssertEquals(Before, Snapshot(Base + '/goverlay'));
+  SetLength(Roots, 1); Roots[0] := '/' + StringOfChar('x', PrismMaxTextBytes);
+  AssertFalse(SavePrismRoots(FileName, Roots, Error));
+  AssertEquals(Before, Snapshot(Base + '/goverlay'));
+  AssertEquals(0, fpSymlink(PChar(Root), PChar(Base + '/alias')));
+  Roots[0] := Base + '/alias';
+  AssertFalse(ValidatePrismRoot(Roots[0], C, Error, Issues));
+  AssertTrue('unavailable saved selection remains removable', SavePrismRoots(FileName, Roots, Error));
+  AssertTrue(LoadPrismRoots(FileName, Loaded, Error));
+  AssertEquals(Roots[0], Loaded[0]);
+  DeleteFile(FileName);
+  AssertEquals(0, fpSymlink(PChar(Root + '/prismlauncher.cfg'), PChar(FileName)));
+  AssertFalse(LoadPrismRoots(FileName, Loaded, Error));
+  DeleteFile(FileName); Put(FileName, StringOfChar('[', 10000));
+  AssertFalse(LoadPrismRoots(FileName, Loaded, Error));
+  Put(FileName, StringOfChar(' ', PrismRootsMaxBytes + 1));
+  AssertFalse(LoadPrismRoots(FileName, Loaded, Error));
+end;
+
+procedure TPrismTests.RootSelectionValidationAndMissingReload;
+var C, Error, Before, FileName: string; Issues: Integer; Roots, Loaded: TPrismRootPaths;
+begin
+  Before := Snapshot(Root);
+  AssertTrue('valid empty root', ValidatePrismRoot(Root, C, Error, Issues));
+  AssertEquals(Root, C); AssertEquals(0, Issues);
+  AssertEquals(Before, Snapshot(Root));
+  Instance('broken', 'broken', 'bad uuid');
+  AssertTrue('bad individual instance does not reject root', ValidatePrismRoot(Root, C, Error, Issues));
+  AssertTrue(Issues > 0);
+  Put(Root + '/prismlauncher.cfg', '[General]' + LineEnding + 'ConfigVersion=9');
+  AssertFalse('unsupported launcher version', ValidatePrismRoot(Root, C, Error, Issues));
+  AssertFalse('missing root', ValidatePrismRoot(Base + '/gone', C, Error, Issues));
+  Put(Root + '/prismlauncher.cfg', Header);
+  AssertEquals(0, fpChmod(PChar(Root + '/prismlauncher.cfg'), 0));
+  AssertFalse('unreadable launcher settings', ValidatePrismRoot(Root, C, Error, Issues));
+  fpChmod(PChar(Root + '/prismlauncher.cfg'), &600);
+  FileName := Base + '/goverlay/prism_roots.json'; SetLength(Roots, 1);
+  Roots[0] := Base + '/currently-missing';
+  AssertTrue(SavePrismRoots(FileName, Roots, Error));
+  AssertTrue(LoadPrismRoots(FileName, Loaded, Error));
+  AssertEquals(Roots[0], Loaded[0]);
 end;
 
 initialization

@@ -24,9 +24,12 @@ type
     procedure TestPendingLegacySelectionAndInvalidKey;
     procedure TestFailedGlobalAutosaveBlocksPrismSelection;
     procedure TestVisiblePersistentContextAndKeyboardCards;
+    procedure TestCustomRootCatalogPersistenceAndRemoval;
+    procedure TestRootChangesBlockOnDirtySaveFailure;
+    procedure TestEmptyLibraryLocatorAndCorruptRoots;
   end;
 implementation
-uses overlayunit, gamecontext, configmanager, test_isolation, SHA1, ExtCtrls,
+uses overlayunit, gamecontext, configmanager, test_isolation, SHA1, ExtCtrls, StdCtrls, prismroots,
   mangohud_ui, games_tab, lossless_scaling_tab, reshade_tab, optiscaler_tab,
   tweaks_md3, Graphics, FileUtil, overlay_utils, Controls, LCLType, goverlay_strings;
 
@@ -369,6 +372,107 @@ begin
     goverlayform.FNavCollapsed := OldCollapsed; goverlayform.ApplyNavCollapsed; goverlayform.OnResize(goverlayform);
   end;
   AssertSentinels;
+end;
+
+procedure TPrismGuiTests.TestCustomRootCatalogPersistenceAndRemoval;
+var H: TGamesTabHelper; Error, RootPath, RootsFile, Before, ProfileDir: string;
+  Saved: TPrismRootPaths; I, Count: Integer; Card: TPrismCardPanel;
+begin
+  H := TGamesTabHelper(goverlayform.FGamesHelper);
+  RootPath := A.DataRoot; RootsFile := IncludeTrailingPathDelimiter(TConfigManager.GetGoverlayFolder) + 'prism_roots.json';
+  AssertFalse(FileExists(RootsFile));
+  Put(RootPath + '/prismlauncher.cfg', '[General]' + LineEnding + 'ConfigVersion=1.3' + LineEnding + 'InstanceDir=instances');
+  Before := Snapshot(Base);
+  try
+    AssertTrue(H.AddPrismRoot(RootPath + '/./', Error));
+    AssertTrue(LoadPrismRoots(RootsFile, Saved, Error)); AssertEquals(1, Length(Saved));
+    AssertEquals(RootPath, Saved[0]);
+    AssertTrue(H.AddPrismRoot(RootPath, Error));
+    AssertTrue(LoadPrismRoots(RootsFile, Saved, Error)); AssertEquals(1, Length(Saved));
+    H.RefreshGameCards;
+    Card := nil; Count := 0;
+    for I := 0 to goverlayform.FCardPanels.Count - 1 do
+      if TObject(goverlayform.FCardPanels[I]) is TPrismCardPanel then
+        if TPrismCardPanel(goverlayform.FCardPanels[I]).Instance.DataRoot = RootPath then
+        begin Inc(Count); Card := TPrismCardPanel(goverlayform.FCardPanels[I]); end;
+    AssertEquals(2, Count); AssertTrue(Card <> nil);
+    AssertTrue(Pos(RootPath, Card.Hint) > 0);
+    AssertTrue(goverlayform.SelectPrismInstance(Card.Instance));
+    ProfileDir := goverlayform.ActiveProfileConfigDir;
+    goverlayform.FLoadingConfig := True; goverlayform.hudtitleEdit.Text := 'retained profile';
+    goverlayform.FLoadingConfig := False; goverlayform.StartAutoSaveTimer;
+    AssertTrue(RenameFile(RootPath + '/prismlauncher.cfg', RootPath + '/prismlauncher.cfg.hidden'));
+    H.RefreshGameCards;
+    AssertTrue(H.RemovePrismRoot(RootPath, Error));
+    AssertTrue(FileExists(ProfileDir + 'MangoHud.conf'));
+    AssertTrue(goverlayform.IsPrismContext);
+    AssertEquals(ProfileDir, goverlayform.ActiveProfileConfigDir);
+    for I := 0 to goverlayform.FCardPanels.Count - 1 do
+      if TObject(goverlayform.FCardPanels[I]) is TPrismCardPanel then
+        AssertTrue(TPrismCardPanel(goverlayform.FCardPanels[I]).Instance.DataRoot <> RootPath);
+    AssertTrue(RenameFile(RootPath + '/prismlauncher.cfg.hidden', RootPath + '/prismlauncher.cfg'));
+    AssertTrue(H.AddPrismRoot(RootPath, Error));
+    AssertEquals(ProfileDir, goverlayform.ActiveProfileConfigDir);
+    AssertTrue(Pos('retained profile', ReadText(ProfileDir + 'MangoHud.conf')) > 0);
+    AssertEquals(Before, Snapshot(Base)); AssertSentinels;
+  finally
+    DeleteFile(RootsFile); H.RefreshGameCards;
+  end;
+end;
+
+procedure TPrismGuiTests.TestRootChangesBlockOnDirtySaveFailure;
+var H: TGamesTabHelper; Error, RootsFile, ProfileDir, Before: string; Count: Integer;
+begin
+  H := TGamesTabHelper(goverlayform.FGamesHelper);
+  RootsFile := IncludeTrailingPathDelimiter(TConfigManager.GetGoverlayFolder) + 'prism_roots.json';
+  Put(A.DataRoot + '/prismlauncher.cfg', '[General]' + LineEnding + 'ConfigVersion=1.3');
+  AssertTrue(H.AddPrismRoot(A.DataRoot, Error));
+  AssertTrue(goverlayform.SelectPrismInstance(A));
+  ProfileDir := ExcludeTrailingPathDelimiter(goverlayform.ActiveProfileConfigDir);
+  Put(ProfileDir, 'file blocks local profile saves');
+  try
+    Before := ReadText(RootsFile); Count := goverlayform.FCardPanels.Count;
+    goverlayform.FLoadingConfig := True; goverlayform.hudtitleEdit.Text := 'pending';
+    goverlayform.FLoadingConfig := False; goverlayform.StartAutoSaveTimer;
+    AssertFalse(H.RemovePrismRoot(A.DataRoot, Error)); AssertTrue(Error <> '');
+    AssertFalse(H.AddPrismRoot(Base + '/other', Error));
+    H.RefreshGameCards;
+    AssertEquals(Count, goverlayform.FCardPanels.Count);
+    AssertEquals(Before, ReadText(RootsFile));
+    AssertEquals(A.StableKey, goverlayform.FActiveProfile.StableKey);
+    AssertTrue(goverlayform.FProfileDirty); AssertSentinels;
+  finally
+    DeleteFile(ProfileDir); goverlayform.TrySaveMangoHudConfig;
+    DeleteFile(RootsFile); H.RefreshGameCards;
+  end;
+end;
+
+procedure TPrismGuiTests.TestEmptyLibraryLocatorAndCorruptRoots;
+var H: TGamesTabHelper; RootCfg, RootBefore, RootsFile, Error: string; Header: TComponent;
+begin
+  H := TGamesTabHelper(goverlayform.FGamesHelper);
+  RootCfg := GetUserDir + '.local/share/PrismLauncher/prismlauncher.cfg';
+  RootBefore := ReadText(RootCfg); DeleteFile(RootCfg);
+  RootsFile := IncludeTrailingPathDelimiter(TConfigManager.GetGoverlayFolder) + 'prism_roots.json';
+  try
+    H.RefreshGameCards;
+    Header := goverlayform.FindComponent('PrismLibraryHeader');
+    AssertTrue(Header <> nil);
+    AssertTrue('locator exists in empty library', Header.FindComponent('PrismLocateRootButton') is TButton);
+    AssertTrue(TButton(Header.FindComponent('PrismLocateRootButton')).Visible);
+    AssertEquals(0, goverlayform.FCardPanels.Count);
+    AssertTrue(goverlayform.FindComponent('PrismEmptyLibraryLabel') <> nil);
+    Put(RootsFile, '{corrupt'); H.RefreshGameCards;
+    Header := goverlayform.FindComponent('PrismLibraryHeader');
+    AssertTrue(Pos('preserved', TLabel(Header.FindComponent('PrismRootsNotice')).Caption) > 0);
+    AssertFalse(H.AddPrismRoot(A.DataRoot, Error));
+    AssertEquals('{corrupt' + LineEnding, ReadText(RootsFile));
+    AssertSentinels;
+  finally
+    DeleteFile(RootsFile);
+    if RootBefore <> '' then Put(RootCfg, RootBefore);
+    H.RefreshGameCards;
+  end;
 end;
 
 initialization

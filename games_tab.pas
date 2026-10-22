@@ -9,7 +9,7 @@ uses
   unix, BaseUnix, StdCtrls, Spin, ComCtrls, Buttons, ActnList, Menus,
   LCLtype, Clipbrd, LCLIntf, IniFiles, FileUtil, StrUtils, Types, fpjson,
   jsonparser, themeunit, systemdetector, constants, bgmod_resources, hintsunit,
-  configmanager, IntfGraphics, Grids, overlayunit, overlay_config, apputils, overlay_utils, goverlay_strings, prismprovider, gamecontext;
+  configmanager, IntfGraphics, Grids, overlayunit, overlay_config, apputils, overlay_utils, goverlay_strings, prismprovider, prismroots, gamecontext;
 
 const
   CARD_W      = 150;
@@ -90,7 +90,16 @@ type
   TGamesTabHelper = class
   private
     FForm: Tgoverlayform;
+    FPrismLibraryHeader: TPanel;
+    FPrismRootsMenu: TPopupMenu;
+    function PrismRootsFile: string;
+    procedure LocatePrismRootClick(Sender: TObject);
+    procedure ManagePrismRootsClick(Sender: TObject);
+    procedure RemovePrismRootClick(Sender: TObject);
+    procedure CreatePrismLibraryHeader(const Notice: string);
   public
+    function AddPrismRoot(const Path: string; out Error: string): Boolean;
+    function RemovePrismRoot(const Path: string; out Error: string): Boolean;
     constructor Create(AForm: Tgoverlayform);
     
     procedure InitGamesTab;
@@ -146,6 +155,119 @@ function NormalizeAppImageName(const AFileName: string): string;
 function ResolveUnofficialPortName(const AGameName: string): string;
 
 implementation
+
+function TGamesTabHelper.PrismRootsFile: string;
+begin
+  Result := IncludeTrailingPathDelimiter(TConfigManager.GetGoverlayFolder) + 'prism_roots.json';
+end;
+
+function TGamesTabHelper.AddPrismRoot(const Path: string; out Error: string): Boolean;
+var Roots: TPrismRootPaths; C: string; I, Issues: Integer;
+begin
+  Result := False; Error := rsPrismRootSaveBlocked;
+  if not FForm.FlushPendingProfileEdits then Exit;
+  if not LoadPrismRoots(PrismRootsFile, Roots, Error) then Exit;
+  if not ValidatePrismRoot(Path, C, Error, Issues) then Exit;
+  for I := 0 to High(Roots) do if Roots[I] = C then Exit(True);
+  if Length(Roots) >= PrismMaxAdditionalRoots then
+  begin Error := Format(rsPrismRootsLimit, [PrismMaxAdditionalRoots]); Exit; end;
+  I := Length(Roots); SetLength(Roots, I + 1); Roots[I] := C;
+  if not SavePrismRoots(PrismRootsFile, Roots, Error) then Exit;
+  RefreshGameCards;
+  Result := True;
+end;
+
+function TGamesTabHelper.RemovePrismRoot(const Path: string; out Error: string): Boolean;
+var Roots: TPrismRootPaths; I, J: Integer;
+begin
+  Result := False; Error := rsPrismRootSaveBlocked;
+  if not FForm.FlushPendingProfileEdits then Exit;
+  if not LoadPrismRoots(PrismRootsFile, Roots, Error) then Exit;
+  for I := 0 to High(Roots) do
+    if Roots[I] = Path then
+    begin
+      for J := I to High(Roots) - 1 do Roots[J] := Roots[J + 1];
+      SetLength(Roots, Length(Roots) - 1);
+      if not SavePrismRoots(PrismRootsFile, Roots, Error) then Exit;
+      RefreshGameCards;
+      Exit(True);
+    end;
+  Error := rsPrismRootInvalid;
+end;
+
+procedure TGamesTabHelper.LocatePrismRootClick(Sender: TObject);
+var Dlg: TSelectDirectoryDialog; Path, Error: string;
+begin
+  Dlg := TSelectDirectoryDialog.Create(FForm);
+  try
+    Dlg.Title := rsPrismLocateRoot;
+    if not Dlg.Execute then Exit;
+    Path := Dlg.FileName;
+  finally Dlg.Free; end;
+  if not AddPrismRoot(Path, Error) then MessageDlg(Error, mtError, [mbOK], 0);
+end;
+
+procedure TGamesTabHelper.RemovePrismRootClick(Sender: TObject);
+var Error: string;
+begin
+  if not (Sender is TMenuItem) then Exit;
+  if not RemovePrismRoot(TMenuItem(Sender).Hint, Error) then
+    MessageDlg(Error, mtError, [mbOK], 0);
+end;
+
+procedure TGamesTabHelper.ManagePrismRootsClick(Sender: TObject);
+var Roots: TPrismRootPaths; Error: string; Item, RemoveMenu: TMenuItem; I: Integer;
+begin
+  if not Assigned(FPrismRootsMenu) then FPrismRootsMenu := TPopupMenu.Create(FForm);
+  FPrismRootsMenu.Items.Clear;
+  Item := TMenuItem.Create(FPrismRootsMenu); Item.Caption := rsPrismLocateRoot;
+  Item.OnClick := @LocatePrismRootClick; FPrismRootsMenu.Items.Add(Item);
+  RemoveMenu := TMenuItem.Create(FPrismRootsMenu); RemoveMenu.Caption := rsPrismRemoveRoot;
+  FPrismRootsMenu.Items.Add(RemoveMenu);
+  if LoadPrismRoots(PrismRootsFile, Roots, Error) then
+  begin
+    for I := 0 to High(Roots) do
+    begin
+      Item := TMenuItem.Create(FPrismRootsMenu);
+      Item.Caption := StringReplace(StringReplace(Roots[I], #10, ' ', [rfReplaceAll]), '&', '&&', [rfReplaceAll]);
+      Item.Hint := Roots[I]; Item.OnClick := @RemovePrismRootClick;
+      RemoveMenu.Add(Item);
+    end;
+    if Length(Roots) = 0 then Error := rsPrismNoRoots;
+  end;
+  if Error <> '' then
+  begin
+    Item := TMenuItem.Create(FPrismRootsMenu); Item.Caption := Error;
+    Item.Enabled := False; RemoveMenu.Add(Item);
+  end;
+  Item := TMenuItem.Create(FPrismRootsMenu); Item.Caption := rsRefreshGameLibrary;
+  Item.OnClick := @RefreshLibraryMenuItemClick; FPrismRootsMenu.Items.Add(Item);
+  if GetEnvironmentVariable('GOVERLAY_TEST_SANDBOX_DIR') = '' then
+    FPrismRootsMenu.PopUp(Mouse.CursorPos.X, Mouse.CursorPos.Y);
+end;
+
+procedure TGamesTabHelper.CreatePrismLibraryHeader(const Notice: string);
+var LocateButton, ManageButton: TButton; L: TLabel;
+begin
+  FreeAndNil(FPrismLibraryHeader);
+  FPrismLibraryHeader := TPanel.Create(FForm);
+  FPrismLibraryHeader.Name := 'PrismLibraryHeader';
+  FPrismLibraryHeader.Parent := FForm.FGamesPanel;
+  FPrismLibraryHeader.SetBounds(8, 4, Max(300, FForm.FGamesPanel.Width - 16), 68);
+  FPrismLibraryHeader.Anchors := [akLeft, akTop, akRight];
+  FPrismLibraryHeader.BevelOuter := bvNone;
+  LocateButton := TButton.Create(FPrismLibraryHeader); LocateButton.Parent := FPrismLibraryHeader;
+  LocateButton.Name := 'PrismLocateRootButton'; LocateButton.Caption := rsPrismLocateRoot;
+  LocateButton.SetBounds(0, 0, 250, 30); LocateButton.OnClick := @LocatePrismRootClick;
+  ManageButton := TButton.Create(FPrismLibraryHeader); ManageButton.Parent := FPrismLibraryHeader;
+  ManageButton.Caption := rsPrismManageRoots; ManageButton.SetBounds(258, 0, 230, 30);
+  ManageButton.OnClick := @ManagePrismRootsClick;
+  L := TLabel.Create(FPrismLibraryHeader); L.Parent := FPrismLibraryHeader;
+  L.Name := 'PrismRootsNotice'; L.AutoSize := False; L.WordWrap := True; L.ShowAccelChar := False;
+  L.SetBounds(0, 34, FPrismLibraryHeader.Width, 34); L.Anchors := [akLeft, akTop, akRight];
+  L.Font.Color := clSilver;
+  L.Caption := Notice; L.Hint := Notice; L.ShowHint := True;
+end;
 
 function NormalizeAppImageName(const AFileName: string): string;
 var
@@ -1290,6 +1412,10 @@ var
   PrismInput: TPrismDiscoveryInput;
   PrismResult: TPrismDiscoveryResult;
   Profile: TActiveProfileContext;
+  SavedRoots: TPrismRootPaths;
+  RootError, RootNotice: string;
+  Unavailable: Integer;
+  RootFound: Boolean;
 begin
   with FForm do
   begin
@@ -1311,7 +1437,26 @@ begin
   PrismInput := Default(TPrismDiscoveryInput);
   PrismInput.HomeDir := ExcludeTrailingPathDelimiter(HomeDir);
   PrismInput.XdgDataHome := GetEnvironmentVariable('XDG_DATA_HOME');
+  RootNotice := '';
+  if LoadPrismRoots(PrismRootsFile, SavedRoots, RootError) then
+  begin
+    PrismInput.AdditionalRoots := SavedRoots;
+
+  end
+  else RootNotice := RootError;
   PrismResult := DiscoverPrism(PrismInput);
+  if RootError = '' then
+  begin
+    Unavailable := 0;
+    for j := 0 to High(SavedRoots) do
+    begin
+      RootFound := False;
+      for k := 0 to High(PrismResult.Installations) do
+        if PrismResult.Installations[k].DataRoot = SavedRoots[j] then RootFound := True;
+      if not RootFound then Inc(Unavailable);
+    end;
+    if Unavailable > 0 then RootNotice := Format(rsPrismRootsUnavailable, [Unavailable]);
+  end;
   for j := 0 to High(PrismResult.Instances) do
   begin
     k := Length(DiscoveredGames); SetLength(DiscoveredGames, k + 1);
@@ -1322,7 +1467,8 @@ begin
     DiscoveredGames[k].Prism := PrismResult.Instances[j];
   end;
   if Length(PrismResult.Issues) > 0 then
-    ShowStatusMessage(Format(rsPrismDiscoveryIssues, [Length(PrismResult.Issues)]));
+    RootNotice := RootNotice + ' ' + Format(rsPrismDiscoveryIssues, [Length(PrismResult.Issues)]);
+  CreatePrismLibraryHeader(Format(rsPrismRootsNotice, [Length(SavedRoots), Trim(RootNotice)]));
   SortDiscoveredGames(DiscoveredGames);
 
   if Length(DiscoveredGames) = 0 then
@@ -1332,8 +1478,9 @@ begin
 
     NoGamesLabel := TLabel.Create(FForm);
     NoGamesLabel.Parent := FGamesPanel;
-    NoGamesLabel.Caption := '󰊴  No games detected in Steam or custom folders.' + LineEnding +
-                            'Right-click anywhere in the library to add custom game directories.';
+    NoGamesLabel.Name := 'PrismEmptyLibraryLabel';
+    NoGamesLabel.Caption := rsPrismRootsEmpty;
+    NoGamesLabel.WordWrap := True;
     NoGamesLabel.Font.Color := RGBToColor(140, 150, 175);
     NoGamesLabel.Font.Size := 10;
     NoGamesLabel.Alignment := taCenter;
@@ -1355,7 +1502,7 @@ begin
     begin
       // Card position (dynamic margin distributes leftover space evenly)
       CardX := RowMargin + (j mod CardsPerRow) * (CARD_W + RowMargin);
-      CardY := RowMargin + (j div CardsPerRow) * (CARD_H + RowMargin);
+      CardY := 76 + RowMargin + (j div CardsPerRow) * (CARD_H + RowMargin);
 
       if DiscoveredGames[j].Kind = gkPrism then
         CardPanel := TPrismCardPanel.Create(FForm)
@@ -1393,6 +1540,7 @@ begin
         CardPanel.OnKeyDown := @PrismCardKeyDown;
         CardPanel.Cursor := crHandPoint;
         CardPanel.Hint := DiscoveredGames[j].Name + LineEnding +
+          DiscoveredGames[j].Prism.DataRoot + LineEnding +
           ExtractFileDir(DiscoveredGames[j].Prism.ConfigPath) + LineEnding + rsPrismLocalOnly;
         CardImage.Hint := CardPanel.Hint;
         CardImage.Visible := False;
@@ -1724,7 +1872,7 @@ begin
     else
       TotalRows := 0;
     FGamesPanel.Width := FGamesScrollBox.Width;
-    FGamesPanel.Height := RowMargin + TotalRows * (CARD_H + RowMargin);
+    FGamesPanel.Height := 76 + RowMargin + TotalRows * (CARD_H + RowMargin);
 
     // Launch background thread to download missing covers from Steam CDN
     if PendingIDs.Count > 0 then
@@ -3307,6 +3455,8 @@ end;
 
 procedure TGamesTabHelper.RefreshLibraryMenuItemClick(Sender: TObject);
 begin
+  if not FForm.FlushPendingProfileEdits then
+  begin MessageDlg(rsPrismRootSaveBlocked, mtError, [mbOK], 0); Exit; end;
   RefreshGameCards;
 end;
 
@@ -3325,6 +3475,11 @@ begin
       FGamesPopupMenu := TPopupMenu.Create(FForm)
     else
       FGamesPopupMenu.Items.Clear;
+
+    AddItem := TMenuItem.Create(FGamesPopupMenu);
+    AddItem.Caption := rsPrismLocateRoot;
+    AddItem.OnClick := @LocatePrismRootClick;
+    FGamesPopupMenu.Items.Add(AddItem);
 
     // 1. Add game folder...
     AddItem := TMenuItem.Create(FGamesPopupMenu);
@@ -3504,6 +3659,15 @@ var
 begin
   with FForm do
   begin
+  if not FlushPendingProfileEdits then Exit;
+  FRightClickedCard := nil;
+  if Assigned(FGameCardMenu) then FGameCardMenu.Close;
+  if Assigned(FGamesPopupMenu) then FGamesPopupMenu.Close;
+  if Assigned(FPrismRootsMenu) then FPrismRootsMenu.Close;
+  FreeAndNil(FPrismLibraryHeader);
+  for i := FGamesPanel.ControlCount - 1 downto 0 do
+    if FGamesPanel.Controls[i].Name = 'PrismEmptyLibraryLabel' then
+      FGamesPanel.Controls[i].Free;
   // Stop any running cover download thread (don't WaitFor — blocks UI)
   if Assigned(FCoverThread) then
   begin
@@ -3604,7 +3768,7 @@ begin
       if not (Ctrl is TPanel) then
         Continue;
       CardX := RowMargin + (CardCount mod CardsPerRow) * (CARD_W + RowMargin);
-      CardY := RowMargin + (CardCount div CardsPerRow) * (CARD_H + RowMargin);
+      CardY := 76 + RowMargin + (CardCount div CardsPerRow) * (CARD_H + RowMargin);
       // Only SetBounds if position actually changed (reduces LCL churn)
       if (Ctrl.Left <> CardX) or (Ctrl.Top <> CardY) or
          (Ctrl.Width <> CARD_W) or (Ctrl.Height <> CARD_H) then
@@ -3621,7 +3785,7 @@ begin
       TotalRows := (CardCount + CardsPerRow - 1) div CardsPerRow;
       // Use Width (not ClientWidth) so scrollbar appearance doesn't trigger a loop
       FGamesPanel.Width  := FGamesScrollBox.Width;
-      FGamesPanel.Height := RowMargin + TotalRows * (CARD_H + RowMargin);
+      FGamesPanel.Height := 76 + RowMargin + TotalRows * (CARD_H + RowMargin);
     end;
   finally
     FInReflow := False;
