@@ -252,6 +252,7 @@ begin
   FreeAndNil(FPrismLibraryHeader);
   FPrismLibraryHeader := TPanel.Create(FForm);
   FPrismLibraryHeader.Name := 'PrismLibraryHeader';
+  FPrismLibraryHeader.Caption := '';
   FPrismLibraryHeader.Parent := FForm.FGamesPanel;
   FPrismLibraryHeader.SetBounds(8, 4, Max(300, FForm.FGamesPanel.Width - 16), 68);
   FPrismLibraryHeader.Anchors := [akLeft, akTop, akRight];
@@ -264,7 +265,7 @@ begin
   ManageButton.OnClick := @ManagePrismRootsClick;
   L := TLabel.Create(FPrismLibraryHeader); L.Parent := FPrismLibraryHeader;
   L.Name := 'PrismRootsNotice'; L.AutoSize := False; L.WordWrap := True; L.ShowAccelChar := False;
-  L.SetBounds(0, 34, FPrismLibraryHeader.Width, 34); L.Anchors := [akLeft, akTop, akRight];
+  L.Align := alBottom; L.Height := 34;
   L.Font.Color := clSilver;
   L.Caption := Notice; L.Hint := Notice; L.ShowHint := True;
 end;

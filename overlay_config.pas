@@ -297,6 +297,7 @@ function LoadOptiScalerConfig(const ActiveGameName: string; out Settings: TOptiS
 
 // Isolated saves write only the supplied profile, without legacy mirrors or wrappers.
 function SaveMangoHudConfigCore(const Settings: TMangoHudSettings; const AvFonts: TStrings; out ErrMsg: string; AIsolatedProfile: Boolean = False): Boolean;
+function SerializeIsolatedMangoHudConfig(const Settings: TMangoHudSettings; const AvFonts, Output: TStrings; out ErrMsg: string): Boolean;
 procedure EnsureDefaultConfigFiles(const GVersion, GChannel, VkbToggleKeyText: string);
 
 implementation
@@ -2256,7 +2257,7 @@ begin
   Result := Format('%.2x%.2x%.2x', [Red, Green, Blue]); // Formata a string no formato HTML (#RRGGBB)
 end;
 
-function SaveMangoHudConfigCore(const Settings: TMangoHudSettings; const AvFonts: TStrings; out ErrMsg: string; AIsolatedProfile: Boolean): Boolean;
+function SaveMangoHudConfigCoreImpl(const Settings: TMangoHudSettings; const AvFonts: TStrings; out ErrMsg: string; AIsolatedProfile: Boolean; Output: TStrings): Boolean;
 var
   ConfigLines: TStringList;
   ConfigDir, FontPath, FontDir: string;
@@ -2286,7 +2287,7 @@ begin
     ConfigDir := TConfigManager.GetMangoHudFolder();
 
   // Create directory if it doesn't exist
-  if not DirectoryExists(ConfigDir) then
+  if (Output = nil) and not DirectoryExists(ConfigDir) then
   begin
     if AIsolatedProfile or (Settings.ActiveGameName <> '') then
       ForceDirectories(ConfigDir)
@@ -2304,6 +2305,8 @@ begin
     if Settings.FpsOnly then
     begin
       ConfigLines.Add('fps_only');
+      if Output <> nil then
+      begin Output.Assign(ConfigLines); Result := True; Exit; end;
       ConfigLines.SaveToFile(Settings.MangoHudCfgFile);
 
       if AIsolatedProfile then
@@ -2899,6 +2902,9 @@ begin
       BlacklistLines.Free;
     end;
 
+    if Output <> nil then
+    begin Output.Assign(ConfigLines); Result := True; Exit; end;
+
     // Save to active config file (game-specific or global)
     ConfigLines.SaveToFile(Settings.MangoHudCfgFile);
 
@@ -2953,6 +2959,20 @@ begin
   finally
     ConfigLines.Free;
   end;
+end;
+
+function SaveMangoHudConfigCore(const Settings: TMangoHudSettings; const AvFonts: TStrings;
+  out ErrMsg: string; AIsolatedProfile: Boolean): Boolean;
+begin
+  Result := SaveMangoHudConfigCoreImpl(Settings, AvFonts, ErrMsg, AIsolatedProfile, nil);
+end;
+
+function SerializeIsolatedMangoHudConfig(const Settings: TMangoHudSettings;
+  const AvFonts, Output: TStrings; out ErrMsg: string): Boolean;
+begin
+  Result := False; ErrMsg := '';
+  if Output = nil then Exit;
+  Result := SaveMangoHudConfigCoreImpl(Settings, AvFonts, ErrMsg, True, Output);
 end;
 
 procedure EnsureDefaultConfigFiles(const GVersion, GChannel, VkbToggleKeyText: string);

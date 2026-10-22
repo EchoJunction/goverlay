@@ -49,6 +49,14 @@ resourcestring
   rsPrismRootsUnavailable = '%d saved directories are unavailable; use Manage Prism directories to remove or rescan them.';
   rsPrismRootsEmpty = 'No games detected. Locate a Prism data directory or use the library menu to add game folders.';
   rsPrismRootSaveBlocked = 'Pending profile edits could not be saved. Save them before changing or rescanning directories.';
+  rsPrismCloneGlobal = 'Clone global MangoHud...';
+  rsPrismCloneHelp = 'Copy supported global MangoHud settings into this local profile. Unknown custom keys are omitted and logging stays scoped to this instance. Prism launch integration remains unavailable.';
+  rsPrismCloneConfirm = 'Replace the local MangoHud profile for "%s" with supported global settings?';
+  rsPrismCloneFailed = 'Could not clone MangoHud. The existing local profile is preserved. Check access to its GOverlay profile directory.';
+  rsPrismCloneSourceFailed = 'Cannot read the global MangoHud profile. Save a global profile first and check its file permissions.';
+  rsPrismCloneSourceAlias = 'The global source points to this local profile. Choose an independent global profile before cloning.';
+  rsPrismCloneExists = 'A local MangoHud profile already exists. Confirm replacement to clone global settings.';
+  rsPrismCloneSaved = 'Global MangoHud copied locally; Prism launch integration unavailable.';
   // Games tab
   rsFolderAlreadyAdded = 'This folder has already been added.';
   rsRemoveFolderTitle = 'Remove non-Steam folder';

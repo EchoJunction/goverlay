@@ -50,6 +50,7 @@ type
     // Any user control interaction (GenericControlChange/Click) clears this.
     FFpsOnly: Boolean;
     procedure ApplyTimeFormat(const AFormat: string);
+    function SerializeOrSaveMangoHudConfig(Output: TStrings; out Error: string): Boolean;
   public
     // Visual Tab Toggles
     FhudcompactToggle, FhorizontalstrechToggle, FhidehudToggle: TToggleSwitch;
@@ -117,13 +118,14 @@ type
     procedure SyncExtrasToggles;
     procedure SyncAllToggles;
     procedure UpdateExtrasCardTheme;
-    procedure LoadMangoHudConfig;
+    procedure LoadMangoHudConfig(PreparedLines: TStrings = nil);
     procedure ResetMangoHudControls;
     procedure ResetMetricGraphs;
     procedure LoadMangoHudBoolFlag(const ATrimmedLine: string);
     procedure LoadMangoHudKeyValue(const AKey, AValue: string);
     procedure SaveMangoHudConfig;
     function TrySaveMangoHudConfig: Boolean;
+    function PreparePrismMangoHudConfig(Output: TStrings; out Error: string): Boolean;
     procedure MetricGraphClick(Sender: TObject);
   end;
 
@@ -4079,7 +4081,7 @@ begin
   end;
 end;
 
-procedure TMangoHudUiHelper.LoadMangoHudConfig;
+procedure TMangoHudUiHelper.LoadMangoHudConfig(PreparedLines: TStrings);
 var
   ConfigLines: TStringList;
   Line, TrimmedLine, Key, Value: string;
@@ -4092,7 +4094,7 @@ begin
   try
     ResetMangoHudControls;
 
-    if not FileExists(MANGOHUDCFGFILE) then
+    if (PreparedLines = nil) and not FileExists(MANGOHUDCFGFILE) then
     begin
       SyncAllToggles; UpdatePresetCardVisuals;
       Exit;
@@ -4100,7 +4102,8 @@ begin
 
     ConfigLines := TStringList.Create;
     try
-      ConfigLines.LoadFromFile(MANGOHUDCFGFILE);
+      if PreparedLines <> nil then ConfigLines.Assign(PreparedLines)
+      else ConfigLines.LoadFromFile(MANGOHUDCFGFILE);
 
       for i := 0 to ConfigLines.Count - 1 do
       begin
@@ -4769,6 +4772,19 @@ begin
 end;
 
 function TMangoHudUiHelper.TrySaveMangoHudConfig: Boolean;
+var Error: string;
+begin
+  Result := SerializeOrSaveMangoHudConfig(nil, Error);
+end;
+
+function TMangoHudUiHelper.PreparePrismMangoHudConfig(Output: TStrings; out Error: string): Boolean;
+begin
+  Result := False; Error := rsPrismCloneFailed;
+  if (Output = nil) or not FForm.IsPrismContext then Exit;
+  Result := SerializeOrSaveMangoHudConfig(Output, Error);
+end;
+
+function TMangoHudUiHelper.SerializeOrSaveMangoHudConfig(Output: TStrings; out Error: string): Boolean;
 var
   Settings: TMangoHudSettings;
   ErrMsg: string;
@@ -5006,12 +5022,17 @@ begin
       Settings.EngineVersion := False; Settings.EngineShort := False;
       Settings.DxApi := False; Settings.FexStats := False;
       Settings.Hdr := False; Settings.Fcat := False;
+      Settings.VulkanDriver := False; Settings.VsyncItemIndex := 4;
     end;
     try
-      Result := overlay_config.SaveMangoHudConfigCore(Settings, fontComboBox.Items, ErrMsg, IsPrismContext);
+      if Output <> nil then
+        Result := overlay_config.SerializeIsolatedMangoHudConfig(Settings, fontComboBox.Items, Output, ErrMsg)
+      else Result := overlay_config.SaveMangoHudConfigCore(Settings, fontComboBox.Items, ErrMsg, IsPrismContext);
     except
       on E: Exception do begin Result := False; ErrMsg := E.Message; end;
     end;
+    Error := ErrMsg;
+    if Output <> nil then Exit;
     FLastProfileSaveSucceeded := Result;
     FProfileDirty := not Result;
     if not Result then
