@@ -27,9 +27,14 @@ type
     procedure TestCustomRootCatalogPersistenceAndRemoval;
     procedure TestRootChangesBlockOnDirtySaveFailure;
     procedure TestEmptyLibraryLocatorAndCorruptRoots;
+    procedure TestCloneNormalizesAndIsolatesProfiles;
+    procedure TestCloneFallbackAndExplicitOverwrite;
+    procedure TestCloneFailuresPreserveProfileAndControls;
+    procedure TestCloneDirtyFailureAndTypedGuards;
+    procedure TestCloneSourceAliasRejectedBeforeDirtySave;
   end;
 implementation
-uses overlayunit, gamecontext, configmanager, test_isolation, SHA1, ExtCtrls, StdCtrls, prismroots,
+uses overlayunit, gamecontext, configmanager, test_isolation, SHA1, ExtCtrls, StdCtrls, prismroots, BaseUnix,
   mangohud_ui, games_tab, lossless_scaling_tab, reshade_tab, optiscaler_tab,
   tweaks_md3, Graphics, FileUtil, overlay_utils, Controls, LCLType, goverlay_strings;
 
@@ -460,6 +465,10 @@ begin
     AssertTrue(Header <> nil);
     AssertTrue('locator exists in empty library', Header.FindComponent('PrismLocateRootButton') is TButton);
     AssertTrue(TButton(Header.FindComponent('PrismLocateRootButton')).Visible);
+    AssertEquals('no internal panel name is displayed', '', TPanel(Header).Caption);
+    AssertTrue('notice stays below locator buttons',
+      TLabel(Header.FindComponent('PrismRootsNotice')).Top >=
+      TButton(Header.FindComponent('PrismLocateRootButton')).Height);
     AssertEquals(0, goverlayform.FCardPanels.Count);
     AssertTrue(goverlayform.FindComponent('PrismEmptyLibraryLabel') <> nil);
     Put(RootsFile, '{corrupt'); H.RefreshGameCards;
@@ -472,6 +481,183 @@ begin
     DeleteFile(RootsFile);
     if RootBefore <> '' then Put(RootCfg, RootBefore);
     H.RefreshGameCards;
+  end;
+end;
+
+procedure TPrismGuiTests.TestCloneNormalizesAndIsolatesProfiles;
+var Error, OldGlobal, Before, ADir, TextA, TextB, Outside: string; SourceHash: string;
+  Lines: TStringList;
+begin
+  OldGlobal := GlobalBefore; Outside := Base + '/external-logs';
+  Put(GlobalPath, 'custom_text_center=Cloned global' + LineEnding + 'fps' + LineEnding +
+    'gpu_stats' + LineEnding + 'cpu_stats' + LineEnding + 'time' + LineEnding +
+    'time_format=%H:%M' + LineEnding + 'font_size=18' + LineEnding + 'text_color=FF0000' + LineEnding +
+    'position=bottom-left' + LineEnding + 'gl_vsync=1' + LineEnding +
+    'output_folder=' + Outside + LineEnding + 'output_folder=/unrelated/logs' + LineEnding +
+    'wine' + LineEnding + 'winesync' + LineEnding + 'engine_version' + LineEnding +
+    'engine_short_names' + LineEnding + 'vulkan_driver' + LineEnding + 'vsync=0' + LineEnding +
+    'dxapi' + LineEnding + 'fex_stats' + LineEnding + 'vkbasalt' + LineEnding + 'fsr' + LineEnding +
+    'hdr' + LineEnding + 'fcat' + LineEnding + 'unknown_custom_key=discarded');
+  GlobalBefore := ReadText(GlobalPath); SourceHash := SHA1Print(SHA1File(GlobalPath));
+  Before := Snapshot(Base);
+  try
+    AssertTrue(goverlayform.SelectPrismInstance(A));
+    AssertTrue('clone action visible', goverlayform.FPrismCloneButton.Visible);
+    AssertTrue('clone explains normalization', Pos('Unknown custom keys', goverlayform.FPrismCloneButton.Hint) > 0);
+    AssertTrue(goverlayform.CloneGlobalMangoHudToPrism(False, Error));
+    ADir := goverlayform.ActiveProfileConfigDir; TextA := ReadText(ADir + 'MangoHud.conf');
+    AssertTrue(Pos('custom_text_center=Cloned global', TextA) > 0);
+    AssertTrue(Pos('font_size=18', TextA) > 0); AssertTrue(Pos('TEXT_COLOR=FF0000', UpperCase(TextA)) > 0);
+    AssertTrue(Pos('position=bottom-left', TextA) > 0); AssertTrue(Pos('gl_vsync=1', TextA) > 0);
+    AssertTrue(Pos('time_format=%H:%M', TextA) > 0);
+    AssertTrue(Pos('output_folder=' + goverlayform.ActiveProfileLogDir, TextA) > 0);
+    AssertFalse(DirectoryExists(Outside)); AssertFalse(Pos('unknown_custom_key', TextA) > 0);
+    Lines := TStringList.Create;
+    try
+      Lines.Text := TextA;
+      AssertEquals(-1, Lines.IndexOf('wine')); AssertEquals(-1, Lines.IndexOf('winesync'));
+      AssertEquals(-1, Lines.IndexOf('engine_version')); AssertEquals(-1, Lines.IndexOf('engine_short_names'));
+      AssertEquals(-1, Lines.IndexOf('vulkan_driver')); AssertEquals(-1, Lines.IndexOf('vsync=0'));
+      AssertEquals(-1, Lines.IndexOf('dxapi')); AssertEquals(-1, Lines.IndexOf('fex_stats'));
+      AssertEquals(-1, Lines.IndexOf('vkbasalt')); AssertEquals(-1, Lines.IndexOf('fsr'));
+      AssertEquals(-1, Lines.IndexOf('hdr')); AssertEquals(-1, Lines.IndexOf('fcat'));
+    finally Lines.Free; end;
+    AssertEquals('Cloned global', goverlayform.hudtitleEdit.Text);
+    AssertFalse(goverlayform.vulkandriverCheckBox.Visible);
+    AssertEquals(rsPrismLocalOnly, goverlayform.FPrismContextWarning.Caption);
+    AssertEquals(rsPrismCloneSaved, goverlayform.FPrismContextMessage.Caption);
+    AssertEquals(SourceHash, SHA1Print(SHA1File(GlobalPath)));
+    goverlayform.FLoadingConfig := True;
+    goverlayform.vulkandriverCheckBox.Checked := True; goverlayform.vsyncComboBox.ItemIndex := 0;
+    goverlayform.FLoadingConfig := False; goverlayform.saveBitBtnClick(nil);
+    AssertEquals('ordinary Prism save shares capability filtering', TextA, ReadText(ADir + 'MangoHud.conf'));
+    AssertTrue(goverlayform.SelectPrismInstance(B));
+    AssertTrue(goverlayform.CloneGlobalMangoHudToPrism(False, Error));
+    TextB := ReadText(goverlayform.ActiveProfileConfigDir + 'MangoHud.conf');
+    AssertTrue(goverlayform.ActiveProfileConfigDir <> ADir);
+    AssertTrue(TextA <> TextB); AssertEquals(TextA, ReadText(ADir + 'MangoHud.conf'));
+    AssertFalse(FileExists(ADir + 'bgmod.conf')); AssertFalse(FileExists(ADir + 'vkBasalt.conf'));
+    AssertFalse(FileExists(ADir + 'OptiScaler.ini')); AssertFalse(FileExists(ADir + 'lsfg-vk.conf'));
+    AssertEquals(Before, Snapshot(Base)); AssertSentinels;
+  finally
+    Put(GlobalPath, OldGlobal); GlobalBefore := OldGlobal;
+  end;
+end;
+
+procedure TPrismGuiTests.TestCloneFallbackAndExplicitOverwrite;
+var Error, OldGlobal, OldNative, Target, Before, SourceHash: string;
+begin
+  OldGlobal := GlobalBefore; OldNative := NativeBefore;
+  DeleteFile(GlobalPath); GlobalBefore := '';
+  Put(NativePath, 'custom_text_center=Native fallback' + LineEnding + 'fps');
+  NativeBefore := ReadText(NativePath); SourceHash := SHA1Print(SHA1File(NativePath));
+  try
+    AssertTrue(goverlayform.SelectPrismInstance(A)); Target := goverlayform.ActiveProfileConfigDir + 'MangoHud.conf';
+    AssertTrue(goverlayform.CloneGlobalMangoHudToPrism(False, Error)); Before := ReadText(Target);
+    AssertEquals('Native fallback', goverlayform.hudtitleEdit.Text);
+    AssertFalse(goverlayform.CloneGlobalMangoHudToPrism(False, Error));
+    AssertEquals(rsPrismCloneExists, Error); AssertEquals(Before, ReadText(Target));
+    AssertEquals(SourceHash, SHA1Print(SHA1File(NativePath)));
+    Put(GlobalPath, 'fps_only'); GlobalBefore := ReadText(GlobalPath);
+    AssertTrue(goverlayform.CloneGlobalMangoHudToPrism(True, Error));
+    AssertEquals('fps_only' + LineEnding, ReadText(Target));
+    AssertFalse(goverlayform.FProfileDirty); AssertSentinels;
+    goverlayform.saveBitBtnClick(nil);
+    AssertEquals('fps_only' + LineEnding, ReadText(Target));
+  finally
+    Put(GlobalPath, OldGlobal); Put(NativePath, OldNative);
+    GlobalBefore := OldGlobal; NativeBefore := OldNative;
+  end;
+end;
+
+procedure TPrismGuiTests.TestCloneFailuresPreserveProfileAndControls;
+var Error, OldGlobal, Target, Dir, Before, OriginalHash: string;
+begin
+  OldGlobal := GlobalBefore;
+  Put(GlobalPath, 'custom_text_center=Global replacement' + LineEnding + 'fps');
+  GlobalBefore := ReadText(GlobalPath);
+  AssertTrue(goverlayform.SelectPrismInstance(A));
+  goverlayform.FLoadingConfig := True; goverlayform.hudtitleEdit.Text := 'Original local';
+  goverlayform.FLoadingConfig := False; AssertTrue(goverlayform.TrySaveMangoHudConfig);
+  Dir := goverlayform.ActiveProfileConfigDir; Target := Dir + 'MangoHud.conf';
+  Before := ReadText(Target); OriginalHash := SHA1Print(SHA1File(Target));
+  try
+    AssertEquals(0, fpChmod(PChar(GlobalPath), 0));
+    AssertFalse(goverlayform.CloneGlobalMangoHudToPrism(True, Error));
+    AssertEquals(rsPrismCloneSourceFailed, Error);
+    AssertEquals('Original local', goverlayform.hudtitleEdit.Text);
+    AssertEquals(0, fpChmod(PChar(GlobalPath), &600));
+    AssertEquals(0, fpChmod(PChar(ExcludeTrailingPathDelimiter(Dir)), &500));
+    AssertFalse(goverlayform.CloneGlobalMangoHudToPrism(True, Error));
+    AssertEquals('Original local', goverlayform.hudtitleEdit.Text);
+    AssertEquals(OriginalHash, SHA1Print(SHA1File(Target)));
+    AssertEquals(A.StableKey, goverlayform.FActiveProfile.StableKey);
+    AssertEquals(0, fpChmod(PChar(ExcludeTrailingPathDelimiter(Dir)), &700));
+    DeleteFile(Target); AssertEquals(0, fpSymlink(PChar(GlobalPath), PChar(Target)));
+    AssertFalse(goverlayform.CloneGlobalMangoHudToPrism(True, Error));
+    DeleteFile(Target); Put(Target, Before);
+    AssertEquals('Original local', goverlayform.hudtitleEdit.Text);
+    AssertSentinels;
+    DeleteFile(GlobalPath); DeleteFile(NativePath);
+    AssertFalse(goverlayform.CloneGlobalMangoHudToPrism(True, Error));
+    AssertEquals(Before, ReadText(Target));
+  finally
+    fpChmod(PChar(ExcludeTrailingPathDelimiter(Dir)), &700);
+    Put(GlobalPath, OldGlobal); GlobalBefore := OldGlobal;
+    Put(NativePath, NativeBefore);
+  end;
+end;
+
+procedure TPrismGuiTests.TestCloneDirtyFailureAndTypedGuards;
+var Error, OldGlobal, Target, Before: string; Context: TActiveProfileContext;
+begin
+  OldGlobal := GlobalBefore;
+  Put(GlobalPath, 'custom_text_center=Do not copy'); GlobalBefore := ReadText(GlobalPath);
+  try
+    AssertFalse('legacy direct clone denied', goverlayform.CloneGlobalMangoHudToPrism(True, Error));
+    AssertTrue(goverlayform.SelectPrismInstance(A));
+    AssertTrue(goverlayform.TrySaveMangoHudConfig);
+    Target := goverlayform.ActiveProfileConfigDir + 'MangoHud.conf'; Before := ReadText(Target);
+    Context := goverlayform.FActiveProfile;
+    goverlayform.FActiveProfile.Capabilities := [];
+    AssertFalse(goverlayform.CloneGlobalMangoHudToPrism(True, Error));
+    goverlayform.FActiveProfile := Context; goverlayform.FActiveProfile.StableKey := 'invalid';
+    AssertFalse(goverlayform.CloneGlobalMangoHudToPrism(True, Error));
+    goverlayform.FActiveProfile := Context;
+    AssertEquals(0, fpChmod(PChar(Target), &400));
+    goverlayform.FLoadingConfig := True; goverlayform.hudtitleEdit.Text := 'Unsaved local';
+    goverlayform.FLoadingConfig := False; goverlayform.StartAutoSaveTimer;
+    AssertFalse(goverlayform.CloneGlobalMangoHudToPrism(True, Error));
+    AssertTrue(goverlayform.FProfileDirty); AssertEquals('Unsaved local', goverlayform.hudtitleEdit.Text);
+    AssertEquals(Before, ReadText(Target)); AssertSentinels;
+  finally
+    if Target <> '' then fpChmod(PChar(Target), &600);
+    goverlayform.TrySaveMangoHudConfig;
+    Put(GlobalPath, OldGlobal); GlobalBefore := OldGlobal;
+  end;
+end;
+
+procedure TPrismGuiTests.TestCloneSourceAliasRejectedBeforeDirtySave;
+var Error, OldGlobal, Target, SourceHash: string;
+begin
+  OldGlobal := GlobalBefore;
+  AssertTrue(goverlayform.SelectPrismInstance(A));
+  AssertTrue(goverlayform.TrySaveMangoHudConfig);
+  Target := goverlayform.ActiveProfileConfigDir + 'MangoHud.conf';
+  DeleteFile(GlobalPath);
+  AssertEquals(0, fpSymlink(PChar(Target), PChar(GlobalPath)));
+  GlobalBefore := ReadText(GlobalPath); SourceHash := SHA1Print(SHA1File(GlobalPath));
+  try
+    goverlayform.FLoadingConfig := True; goverlayform.hudtitleEdit.Text := 'Keep unsaved edits';
+    goverlayform.FLoadingConfig := False; goverlayform.StartAutoSaveTimer;
+    AssertFalse(goverlayform.CloneGlobalMangoHudToPrism(True, Error));
+    AssertEquals(rsPrismCloneSourceAlias, Error);
+    AssertTrue(goverlayform.FProfileDirty);
+    AssertEquals('Keep unsaved edits', goverlayform.hudtitleEdit.Text);
+    AssertEquals(SourceHash, SHA1Print(SHA1File(GlobalPath))); AssertSentinels;
+  finally
+    DeleteFile(GlobalPath); Put(GlobalPath, OldGlobal); GlobalBefore := OldGlobal;
+    goverlayform.TrySaveMangoHudConfig;
   end;
 end;
 

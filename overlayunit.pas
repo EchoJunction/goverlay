@@ -1225,6 +1225,7 @@ type
     FProfileDirty: Boolean;
     FPrismContextPanel: TPanel;
     FPrismContextTitle, FPrismContextRoot, FPrismContextWarning, FPrismContextMessage: TLabel;
+    FPrismCloneButton: TButton;
     FPrismContentTopSpacing: Integer;
     FPrismEnabledStates: array of record
       Control: TControl; WasEnabled: Boolean;
@@ -1587,6 +1588,8 @@ type
     function ActiveProfileConfigDir: string;
     function ActiveProfileLogDir: string;
     function SelectPrismInstance(const Instance: TPrismInstance): Boolean;
+    function CloneGlobalMangoHudToPrism(ReplaceExisting: Boolean; out Error: string): Boolean;
+    procedure PrismCloneGlobalClick(Sender: TObject);
     function FlushPendingProfileEdits: Boolean;
     procedure ClearActiveProfileContext;
     procedure ApplyActiveProfileCapabilities;
@@ -1858,7 +1861,7 @@ function IsProcessRunningPure(const ProcName: string): Boolean;
 implementation
 
 uses
-  xlib, x, tweaks_md3, games_tab, vkbasalt_tab, mangohud_ui, goverlay_system, optiscaler_tab, home_tab, sidebar_nav, changelogunit, lossless_scaling_tab, lsfg_migration_dialog, notificationunit, reshade_tab
+  xlib, x, tweaks_md3, games_tab, vkbasalt_tab, mangohud_ui, goverlay_system, optiscaler_tab, home_tab, sidebar_nav, changelogunit, lossless_scaling_tab, lsfg_migration_dialog, notificationunit, reshade_tab, prismprofile
   {$IFDEF LCLqt6}
   , qtobjects
   {$ENDIF}
@@ -10913,6 +10916,70 @@ begin
   ApplyActiveProfileCapabilities;
 end;
 
+function Tgoverlayform.CloneGlobalMangoHudToPrism(ReplaceExisting: Boolean; out Error: string): Boolean;
+var Target, SourceFile: string; SourceLines, OriginalLines, Output: TStringList;
+  Helper: TMangoHudUiHelper; WasLoading, LoadedSource: Boolean;
+begin
+  Result := False; Error := rsPrismCloneFailed;
+  if not Assigned(FMangoHelper) or
+    not PrismCloneTarget(FActiveProfile, TConfigManager.GetHostDataDir, Target, Error) then Exit;
+  SourceFile := GetGameConfigDir('') + 'MangoHud.conf';
+  if not FileExists(SourceFile) then
+    SourceFile := IncludeTrailingPathDelimiter(GetMangoHudConfigDir) + 'MangoHud.conf';
+  SourceLines := TStringList.Create; OriginalLines := TStringList.Create; Output := TStringList.Create;
+  Helper := TMangoHudUiHelper(FMangoHelper);
+  WasLoading := FLoadingConfig; LoadedSource := False;
+  try
+    try
+      { Read-only preflight rejects source aliases before a pending local save
+        could modify the file also exposed as the global source. }
+      if not ReadMangoHudCloneSource(SourceFile, Target, SourceLines, Error) then Exit;
+      if not FlushPendingProfileEdits then begin Error := rsPrismSaveFailed; Exit; end;
+      if FileExists(Target) and not ReplaceExisting then begin Error := rsPrismCloneExists; Exit; end;
+      if not Helper.PreparePrismMangoHudConfig(OriginalLines, Error) then Exit;
+      FLoadingConfig := True;
+      LoadedSource := True;
+      Helper.LoadMangoHudConfig(SourceLines);
+      if not Helper.PreparePrismMangoHudConfig(Output, Error) then Exit;
+      if not WritePrismClone(FActiveProfile, TConfigManager.GetHostDataDir, Output, ReplaceExisting, Error) then Exit;
+      Result := True;
+    except
+      Error := rsPrismCloneFailed;
+    end;
+  finally
+    if LoadedSource then
+    begin
+      { A failed clone restores the controls from the captured local state;
+        the previous destination is untouched until successful atomic rename. }
+      if Result then Helper.LoadMangoHudConfig(Output)
+      else Helper.LoadMangoHudConfig(OriginalLines);
+      ApplyActiveProfileCapabilities;
+    end;
+    FLoadingConfig := WasLoading;
+    Output.Free; OriginalLines.Free; SourceLines.Free;
+  end;
+  if Result then
+  begin
+    FProfileDirty := False; FLastProfileSaveSucceeded := True;
+    TGamesTabHelper(FGamesHelper).RefreshGameCards;
+    ShowStatusMessage(rsPrismCloneSaved);
+  end;
+end;
+
+procedure Tgoverlayform.PrismCloneGlobalClick(Sender: TObject);
+var Target, Error: string;
+begin
+  if not PrismCloneTarget(FActiveProfile, TConfigManager.GetHostDataDir, Target, Error) then Exit;
+  if CloneGlobalMangoHudToPrism(False, Error) then Exit;
+  if Error = rsPrismCloneExists then
+  begin
+    if MessageDlg(Format(rsPrismCloneConfirm, [FActiveProfile.DisplayName]),
+      mtConfirmation, [mbYes, mbNo], 0) <> mrYes then Exit;
+    if CloneGlobalMangoHudToPrism(True, Error) then Exit;
+  end;
+  MessageDlg(Error, mtError, [mbOK], 0);
+end;
+
 function Tgoverlayform.SelectPrismInstance(const Instance: TPrismInstance): Boolean;
 var Context: TActiveProfileContext; WasLoading: Boolean;
 begin
@@ -10967,7 +11034,7 @@ begin
     FPrismContextPanel.ParentBackground := False;
     FPrismContextPanel.Color := RGBToColor(32, 40, 58);
     FPrismContextPanel.Caption := '';
-    FPrismContextPanel.SetBounds(0, 0, goverlayPanel.ClientWidth, 104);
+    FPrismContextPanel.SetBounds(0, 0, goverlayPanel.ClientWidth, 136);
     FPrismContextPanel.Anchors := [akLeft, akTop, akRight];
     MakeLine(FPrismContextTitle, 8, 20);
     FPrismContextTitle.Font.Style := [fsBold];
@@ -10975,6 +11042,12 @@ begin
     FPrismContextRoot.Font.Color := clSilver;
     MakeLine(FPrismContextWarning, 52, 20);
     MakeLine(FPrismContextMessage, 76, 20);
+    FPrismCloneButton := TButton.Create(Self);
+    FPrismCloneButton.Parent := FPrismContextPanel;
+    FPrismCloneButton.Caption := rsPrismCloneGlobal;
+    FPrismCloneButton.Hint := rsPrismCloneHelp; FPrismCloneButton.ShowHint := True;
+    FPrismCloneButton.SetBounds(12, 102, 250, 28);
+    FPrismCloneButton.OnClick := @PrismCloneGlobalClick;
   end;
   if not FPrismContextPanel.Visible then
     FPrismContentTopSpacing := goverlayPageControl.BorderSpacing.Top;
@@ -11031,7 +11104,8 @@ var I: Integer;
            (Box = vkbasaltstatusCheckBox) or (Box = fsrCheckBox) or
            (Box = hdrCheckBox) or (Box = fcatCheckBox) or
            (Box = engineversionCheckBox) or (Box = engineshortCheckBox) or
-           (Box = dxapiCheckBox) or (Box = fexstatsCheckBox) then Hide(C);
+           (Box = dxapiCheckBox) or (Box = fexstatsCheckBox) or
+           (Box = vulkandriverCheckBox) then Hide(C);
       end;
       if C is TWinControl then HideLinked(TWinControl(C));
     end;
@@ -11082,6 +11156,7 @@ begin
     Hide(fsrCheckBox); Hide(hdrCheckBox); Hide(fcatCheckBox);
     Hide(engineversionCheckBox); Hide(engineshortCheckBox); Hide(dxapiCheckBox);
     Hide(fexstatsCheckBox); Hide(wineLabel); Hide(wineColorButton);
+    Hide(vulkandriverCheckBox);
     Hide(engineColorButton);
     HideLinked(Self);
     HideMenu(FWinePrefixMenuItem); HideMenu(FCloneGlobalMenuItem);

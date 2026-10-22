@@ -82,6 +82,12 @@ When a game is selected, Goverlay switches to **Game Mode**. Each game gets its 
 
 The bottom **launch command box** updates to show the game-specific `bgmod` command with `%command%` suffix, ready to paste into Steam.
 
+### Prism local MangoHud profiles
+
+Prism instances use isolated local MangoHud profiles. **Clone global MangoHud** copies the saved global profile (or the native MangoHud configuration if no saved global profile exists), with confirmation before replacing an existing local profile. The copy uses the editor's supported settings and normalization: custom unknown keys are omitted, Java/OpenGL capabilities apply, and logging paths stay scoped to the selected instance. The global source is unchanged. `fps_only` remains a single-token profile.
+
+Prism launch integration is unavailable. Local editing and cloning do not configure Prism's Play action or install wrappers, Windows tools or Vulkan postprocessors.
+
 ### bgmod Wrapper
 `bgmod` is a compiled Free Pascal binary (not a bash script) that replaces the legacy `fgmod` approach. It:
 - Intercepts game execution arguments.
