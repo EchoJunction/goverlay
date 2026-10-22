@@ -1,0 +1,58 @@
+x-runtime: &runtime
+  image: localhost/goverlay-prism-runtime:test
+  build:
+    context: .
+    dockerfile: Containerfile
+    target: runtime
+  network_mode: pasta
+  user: "1000:1000"
+  cap_drop: [ALL]
+  security_opt: [no-new-privileges:true]
+  environment:
+    LIBGL_ALWAYS_SOFTWARE: "1"
+    QT_X11_NO_MITSHM: "1"
+  shm_size: 256m
+
+services:
+  smoke:
+    <<: *runtime
+    command: [smoke]
+    network_mode: none
+    # No ports or host mounts. Every run starts with a fresh container HOME.
+  desktop:
+    <<: *runtime
+    profiles: [interactive]
+    command: [desktop]
+    ports:
+      - "127.0.0.1:${PRISM_DESKTOP_PORT:-6080}:6080"
+    volumes:
+      - desktop-home:/home/tester
+  app-tests:
+    <<: *runtime
+    image: localhost/goverlay-prism-editor:test
+    build:
+      context: .
+      dockerfile: Containerfile
+      target: editor
+    profiles: [editor]
+    command: [app-tests]
+    network_mode: none
+    volumes:
+      - ../../..:/source:ro
+  app-desktop:
+    <<: *runtime
+    image: localhost/goverlay-prism-editor:test
+    build:
+      context: .
+      dockerfile: Containerfile
+      target: editor
+    profiles: [editor-interactive]
+    command: [app-desktop]
+    ports:
+      - "127.0.0.1:${PRISM_DESKTOP_PORT:-6080}:6080"
+    volumes:
+      - ../../..:/source:ro
+      - desktop-home:/home/tester
+
+volumes:
+  desktop-home:
