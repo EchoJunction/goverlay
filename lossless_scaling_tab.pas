@@ -998,6 +998,7 @@ end;
 
 procedure TLosslessScalingTabHelper.InstallAfmfClick(Sender: TObject);
 begin
+  if (FForm is Tgoverlayform) and Tgoverlayform(FForm).IsPrismContext then Exit;
   if Assigned(FLsAfmfInstallBtn) then
     FLsAfmfInstallBtn.Enabled := False;
   TAfmfInstallThread.Create(Self).Start;
@@ -1159,12 +1160,14 @@ end;
 
 procedure TLosslessScalingTabHelper.MethodNoneClick(Sender: TObject);
 begin
+  if (FForm is Tgoverlayform) and Tgoverlayform(FForm).IsPrismContext then Exit;
   SetInterpolationMethod(imNone);
   ControlStateChange(Sender);
 end;
 
 procedure TLosslessScalingTabHelper.MethodLsfgClick(Sender: TObject);
 begin
+  if (FForm is Tgoverlayform) and Tgoverlayform(FForm).IsPrismContext then Exit;
   SetInterpolationMethod(imLsfg);
   if Assigned(FLsMultiplierTrackBar) and (FLsMultiplierTrackBar.Position <= 1) then
   begin
@@ -1183,6 +1186,7 @@ end;
 
 procedure TLosslessScalingTabHelper.MethodMakoClick(Sender: TObject);
 begin
+  if (FForm is Tgoverlayform) and Tgoverlayform(FForm).IsPrismContext then Exit;
   SetInterpolationMethod(imMako);
   ControlStateChange(Sender);
 end;
@@ -1192,6 +1196,7 @@ var
   OptiActive: Boolean;
   PrevMethod: TInterpolationMethod;
 begin
+  if (FForm is Tgoverlayform) and Tgoverlayform(FForm).IsPrismContext then Exit;
   PrevMethod := FInterpolationMethod;
   OptiActive := False;
   if Assigned(FForm) and (FForm is Tgoverlayform) then
@@ -2147,11 +2152,13 @@ end;
 
 procedure TLosslessScalingTabHelper.MigrationAlertBtnClick(Sender: TObject);
 begin
+  if (FForm is Tgoverlayform) and Tgoverlayform(FForm).IsPrismContext then Exit;
   ShowLsfgMigrationDialog(FForm, Self);
 end;
 
 procedure TLosslessScalingTabHelper.LsfgAssistantBtnClick(Sender: TObject);
 begin
+  if (FForm is Tgoverlayform) and Tgoverlayform(FForm).IsPrismContext then Exit;
   ShowLsfgMigrationDialog(FForm, Self);
 end;
 
@@ -4565,6 +4572,7 @@ end;
 
 procedure TLosslessScalingTabHelper.InstallMakoClick(Sender: TObject);
 begin
+  if (FForm is Tgoverlayform) and Tgoverlayform(FForm).IsPrismContext then Exit;
   FLsInstallBtn.Enabled := False;
   FLsCheckUpdatesBtn.Enabled := False;
   FLsProgressBar.Position := 0;
@@ -4577,6 +4585,7 @@ end;
 
 procedure TLosslessScalingTabHelper.InstallLsfgClick(Sender: TObject);
 begin
+  if (FForm is Tgoverlayform) and Tgoverlayform(FForm).IsPrismContext then Exit;
   if Assigned(FLsLsfgInstallBtn) then
     FLsLsfgInstallBtn.Enabled := False;
   if Assigned(FLsProgressBar) then
@@ -4939,6 +4948,7 @@ procedure TLosslessScalingTabHelper.BrowseDllClick(Sender: TObject);
 var
   OD: TOpenDialog;
 begin
+  if (FForm is Tgoverlayform) and Tgoverlayform(FForm).IsPrismContext then Exit;
   OD := TOpenDialog.Create(FForm);
   try
     if FInterpolationMethod = imLsfg then
@@ -5025,6 +5035,7 @@ var
   HasLosslessDll, AutoBaseCapVal: Boolean;
   ConfIni: TIniFile;
 begin
+  if (FForm is Tgoverlayform) and Tgoverlayform(FForm).IsPrismContext then Exit('');
   Result := '';
 
   // Determine scaling settings before validating the DLL: MAKO v4.5.0 decoupled
@@ -5331,6 +5342,7 @@ var
   FlowStr, PerfStr, HdrStr, AllowFp16Str, OverridePresentStr, PreserveSwapchainStr, ConfFile, CachedTargetExe: string;
   ConfIni: TIniFile;
 begin
+  if (FForm is Tgoverlayform) and Tgoverlayform(FForm).IsPrismContext then Exit('');
   Result := '';
   if FLsMultiplierTrackBar.Position <= 1 then Exit;
   
@@ -5505,6 +5517,7 @@ var
   Lines, LegacyLines: TStringList;
   OutDir, OutPath, LegacyOutPath, DllP, ExeName: string;
 begin
+  if (FForm is Tgoverlayform) and Tgoverlayform(FForm).IsPrismContext then Exit('');
   Result := '';
   if ATargetDir <> '' then
     OutDir := ATargetDir
@@ -6132,6 +6145,7 @@ var
   CfgPath, CfgDir, DllPath, MethodStr: string;
   IsEnabled: Boolean;
 begin
+  if (FForm is Tgoverlayform) and Tgoverlayform(FForm).IsPrismContext then Exit;
   UpdateControlsEnabled;
   CfgPath := GetConfigFile;
   CfgDir := ExtractFilePath(CfgPath);

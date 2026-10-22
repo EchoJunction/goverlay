@@ -3321,6 +3321,7 @@ var
   ErrMsg: string;
   LaunchCommand: string;
 begin
+  if FForm.IsPrismContext then Exit;
   with FForm do
   begin
     Settings.ActiveGameName := FActiveGameName;

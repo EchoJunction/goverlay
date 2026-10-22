@@ -9,7 +9,7 @@ uses
   unix, BaseUnix, StdCtrls, Spin, ComCtrls, Buttons, ActnList, Menus,
   LCLtype, Clipbrd, LCLIntf, IniFiles, FileUtil, StrUtils, Types, fpjson,
   jsonparser, themeunit, systemdetector, constants, bgmod_resources, hintsunit,
-  configmanager, IntfGraphics, Grids, overlayunit, overlay_config, apputils, overlay_utils, goverlay_strings;
+  configmanager, IntfGraphics, Grids, overlayunit, overlay_config, apputils, overlay_utils, goverlay_strings, prismprovider, gamecontext;
 
 const
   CARD_W      = 150;
@@ -20,7 +20,14 @@ const
   SEL_EXPAND  = 3;
 
 type
-  TGameKind = (gkSteam, gkNonSteam);
+  TGameKind = (gkSteam, gkNonSteam, gkPrism);
+
+  TPrismCardPanel = class(TPanel)
+  protected
+    procedure Paint; override;
+  public
+    Instance: TPrismInstance;
+  end;
 
   TGameDiscoveryItem = record
     Kind:       TGameKind;
@@ -30,6 +37,7 @@ type
     LibPath:    string;
     SubPath:    string;
     IsAppImage: Boolean;
+    Prism: TPrismInstance;
   end;
 
   TGameDiscoveryArray = array of TGameDiscoveryItem;
@@ -102,6 +110,7 @@ type
     procedure ApplyCardBrightness(ACard: TPanel; BrightFactor: Integer);
     procedure ApplyAllCardsDim;
     procedure GameCardClick(Sender: TObject);
+    procedure PrismCardKeyDown(Sender: TObject; var Key: Word; Shift: TShiftState);
     procedure GameCardUninstallClick(Sender: TObject);
     procedure GameCardMouseEnter(Sender: TObject);
     procedure GameCardMouseLeave(Sender: TObject);
@@ -1217,7 +1226,7 @@ begin
   begin
     if ItemA.Kind <> ItemB.Kind then
     begin
-      if ItemA.Kind = gkSteam then Result := -1 else Result := 1;
+      Result := Ord(ItemA.Kind) - Ord(ItemB.Kind);
     end
     else if ItemA.Kind = gkSteam then
       Result := AnsiCompareText(ItemA.AppID, ItemB.AppID)
@@ -1278,6 +1287,9 @@ var
   TweakLines: TStringList;
   k, BadgeCount: Integer;
   BdgHint: string;
+  PrismInput: TPrismDiscoveryInput;
+  PrismResult: TPrismDiscoveryResult;
+  Profile: TActiveProfileContext;
 begin
   with FForm do
   begin
@@ -1296,6 +1308,21 @@ begin
   SetLength(DiscoveredGames, 0);
   DiscoverSteamGames(DiscoveredGames);
   DiscoverNonSteamGames(DiscoveredGames);
+  PrismInput := Default(TPrismDiscoveryInput);
+  PrismInput.HomeDir := ExcludeTrailingPathDelimiter(HomeDir);
+  PrismInput.XdgDataHome := GetEnvironmentVariable('XDG_DATA_HOME');
+  PrismResult := DiscoverPrism(PrismInput);
+  for j := 0 to High(PrismResult.Instances) do
+  begin
+    k := Length(DiscoveredGames); SetLength(DiscoveredGames, k + 1);
+    DiscoveredGames[k] := Default(TGameDiscoveryItem);
+    DiscoveredGames[k].Kind := gkPrism;
+    DiscoveredGames[k].Name := PrismResult.Instances[j].DisplayName;
+    DiscoveredGames[k].SubPath := PrismResult.Instances[j].StableKey;
+    DiscoveredGames[k].Prism := PrismResult.Instances[j];
+  end;
+  if Length(PrismResult.Issues) > 0 then
+    ShowStatusMessage(Format(rsPrismDiscoveryIssues, [Length(PrismResult.Issues)]));
   SortDiscoveredGames(DiscoveredGames);
 
   if Length(DiscoveredGames) = 0 then
@@ -1330,7 +1357,9 @@ begin
       CardX := RowMargin + (j mod CardsPerRow) * (CARD_W + RowMargin);
       CardY := RowMargin + (j div CardsPerRow) * (CARD_H + RowMargin);
 
-      CardPanel := TPanel.Create(FForm);
+      if DiscoveredGames[j].Kind = gkPrism then
+        CardPanel := TPrismCardPanel.Create(FForm)
+      else CardPanel := TPanel.Create(FForm);
       CardPanel.Parent := FGamesPanel;
       CardPanel.SetBounds(CardX, CardY, CARD_W, CARD_H);
       CardPanel.BevelOuter := bvNone;
@@ -1356,6 +1385,36 @@ begin
       CardImage.OnMouseLeave := @GameCardMouseLeave;
       CardImage.OnClick := @GameCardClick;
       CardImage.OnMouseUp := @GameCardMouseUp;
+
+      if DiscoveredGames[j].Kind = gkPrism then
+      begin
+        TPrismCardPanel(CardPanel).Instance := DiscoveredGames[j].Prism;
+        CardPanel.TabStop := True;
+        CardPanel.OnKeyDown := @PrismCardKeyDown;
+        CardPanel.Cursor := crHandPoint;
+        CardPanel.Hint := DiscoveredGames[j].Name + LineEnding +
+          ExtractFileDir(DiscoveredGames[j].Prism.ConfigPath) + LineEnding + rsPrismLocalOnly;
+        CardImage.Hint := CardPanel.Hint;
+        CardImage.Visible := False;
+        BdgLbl := TLabel.Create(CardPanel); BdgLbl.Parent := CardPanel;
+        BdgLbl.AutoSize := False; BdgLbl.Transparent := True; BdgLbl.SetBounds(8, 16, CARD_W - 16, 155);
+        BdgLbl.WordWrap := True; BdgLbl.Alignment := taCenter;
+        BdgLbl.Font.Color := clWhite; BdgLbl.Font.Size := 10;
+        BdgLbl.Caption := rsPrismCardSource + LineEnding + LineEnding +
+          DiscoveredGames[j].Name + LineEnding + DiscoveredGames[j].Prism.MinecraftVersion +
+          LineEnding + DiscoveredGames[j].Prism.Loader;
+        BdgLbl.OnClick := @GameCardClick; BdgLbl.Hint := CardPanel.Hint; BdgLbl.ShowHint := True;
+        BdgLbl := TLabel.Create(CardPanel); BdgLbl.Parent := CardPanel;
+        BdgLbl.AutoSize := False; BdgLbl.Transparent := True; BdgLbl.SetBounds(8, CARD_H - 40, CARD_W - 16, 36);
+        BdgLbl.WordWrap := True; BdgLbl.Alignment := taCenter; BdgLbl.Font.Color := clSilver;
+        BdgLbl.Caption := rsPrismCardUnavailable;
+        BdgLbl.Hint := rsPrismLocalOnly; BdgLbl.ShowHint := True;
+        if PrismProfileContext(DiscoveredGames[j].Prism, TConfigManager.GetHostDataDir, Profile) and
+           FileExists(Profile.ConfigDir + 'MangoHud.conf') then BdgLbl.Hint := rsPrismLocalProfile + '. ' + rsPrismLocalOnly;
+        BdgLbl.OnClick := @GameCardClick;
+        FCardPanels.Add(CardPanel); FOrigCovers.Add(nil);
+        Continue;
+      end;
 
       if DiscoveredGames[j].Kind = gkSteam then
       begin
@@ -2234,6 +2293,24 @@ end;
 
 
 
+procedure TPrismCardPanel.Paint;
+begin
+  inherited Paint;
+  Canvas.Brush.Color := RGBToColor(32, 40, 58);
+  if Focused then Canvas.Pen.Color := clHighlight
+  else Canvas.Pen.Color := RGBToColor(55, 66, 88);
+  Canvas.RoundRect(1, 1, Width - 1, Height - 1, 12, 12);
+end;
+
+procedure TGamesTabHelper.PrismCardKeyDown(Sender: TObject; var Key: Word; Shift: TShiftState);
+begin
+  if (Sender is TPrismCardPanel) and (Key in [VK_RETURN, VK_SPACE]) then
+  begin
+    GameCardClick(Sender);
+    Key := 0;
+  end;
+end;
+
 procedure TGamesTabHelper.GameCardClick(Sender: TObject);
 var
   Panel: TPanel;
@@ -2247,6 +2324,14 @@ begin
   else if Sender is TImage then Panel := TPanel(TImage(Sender).Parent)
   else if Sender is TLabel then Panel := TPanel(TLabel(Sender).Parent)
   else Exit;
+
+  if Panel is TPrismCardPanel then
+  begin
+    if SelectPrismInstance(TPrismCardPanel(Panel).Instance) then ShowGameThumb(Panel);
+    Exit;
+  end;
+  if not FlushPendingProfileEdits then Exit;
+  ClearActiveProfileContext;
 
   // Extract game name from card hint
   Lines := TStringList.Create;
@@ -2332,6 +2417,7 @@ begin
   begin
   Panel := FRightClickedCard;
   if Panel = nil then Exit;
+  if Panel is TPrismCardPanel then Exit;
 
   // Extract game name and install path from Hint:
   // '(AppID) GameName' + LineEnding + 'LibPath/common/InstallDir'
@@ -2496,6 +2582,7 @@ begin
   DbgLog('GameCardMouseEnter: ' + TControl(Sender).Name);
   Panel := GetCardPanel(TControl(Sender));
   if Panel = nil then Exit;
+  if Panel is TPrismCardPanel then Exit;
 
   if Sender is TControl then
     TControl(Sender).Cursor := crHandPoint;
@@ -2571,6 +2658,7 @@ begin
   DbgLog('GameCardMouseLeave: ' + TControl(Sender).Name);
   Panel := GetCardPanel(TControl(Sender));
   if Panel = nil then Exit;
+  if Panel is TPrismCardPanel then Exit;
 
   if Panel <> FHoveredCard then
   begin
@@ -2695,6 +2783,7 @@ begin
   Ctrl := TControl(Sender);
   CardPanel := GetCardPanel(Ctrl);
   if not Assigned(CardPanel) then Exit;
+  if CardPanel is TPrismCardPanel then Exit;
 
   with FForm do
   begin
@@ -2767,6 +2856,7 @@ begin
   with FForm do
   begin
     if not Assigned(CardPanel) then Exit;
+  if CardPanel is TPrismCardPanel then Exit;
 
     ActionBtn := TImage.Create(CardPanel);
     ActionBtn.Parent := CardPanel;
@@ -2860,6 +2950,7 @@ begin
   begin
   Panel := FRightClickedCard;
   if Panel = nil then Exit;
+  if Panel is TPrismCardPanel then Exit;
 
   Lines := TStringList.Create;
   try
@@ -2892,6 +2983,7 @@ begin
   begin
   Panel := FRightClickedCard;
   if Panel = nil then Exit;
+  if Panel is TPrismCardPanel then Exit;
 
   Lines := TStringList.Create;
   try
@@ -3050,6 +3142,7 @@ begin
   begin
     CardPanel := FRightClickedCard;
     if not Assigned(CardPanel) then Exit;
+  if CardPanel is TPrismCardPanel then Exit;
 
     if CardPanel.Hint = '' then Exit;
 
@@ -3367,6 +3460,8 @@ procedure TGamesTabHelper.GamesEmptySpaceClick(Sender: TObject);
 begin
   with FForm do
   begin
+  if not FlushPendingProfileEdits then Exit;
+  ClearActiveProfileContext;
   // Clicking empty space in the games grid
   if FActiveGameName <> '' then
   begin
@@ -3612,6 +3707,7 @@ begin
     begin
       Panel := TPanel(FCardPanels[i]);
       if not Assigned(Panel) then Continue;
+      if Panel is TPrismCardPanel then Continue;
 
       FirstLine := Panel.Hint;
       p := Pos(#10, FirstLine);

@@ -808,6 +808,7 @@ var
   OptiDll: string;
   OptIdx, Res: Integer;
 begin
+  if (FForm is Tgoverlayform) and Tgoverlayform(FForm).IsPrismContext then Exit;
   FSelectedMethod := AMethod;
   if Assigned(FNoneRadio) then FNoneRadio.Checked := (AMethod = rmNone);
   if Assigned(FReshadeRadio) then FReshadeRadio.Checked := (AMethod = rmReshade);
@@ -1372,6 +1373,7 @@ var
   Idx: Integer;
   Btn: TBitBtn;
 begin
+  if (FForm is Tgoverlayform) and Tgoverlayform(FForm).IsPrismContext then Exit;
   if not (Sender is TBitBtn) then Exit;
   Btn := TBitBtn(Sender);
   Idx := Btn.Tag;
@@ -1385,6 +1387,7 @@ end;
 
 procedure TReshadeTabHelper.OnUpdateBtnClick(Sender: TObject);
 begin
+  if (FForm is Tgoverlayform) and Tgoverlayform(FForm).IsPrismContext then Exit;
   FUpdateBtn.Enabled := False;
   FUpdateBtn.Caption := 'Updating...';
   TReshadeAsyncInstallThread.Create(Self, -1, True);
@@ -1394,6 +1397,7 @@ procedure TReshadeTabHelper.OnOpenShadersBtnClick(Sender: TObject);
 var
   ShadersDir: string;
 begin
+  if (FForm is Tgoverlayform) and Tgoverlayform(FForm).IsPrismContext then Exit;
   ShadersDir := GetReShadeShadersPath;
   EnsureReShadeDirectories;
   ExecuteShellCommand('xdg-open ' + QuotedStr(ShadersDir) + ' &');
@@ -1461,6 +1465,7 @@ var
   MainForm: Tgoverlayform;
   OptIdx, Res: Integer;
 begin
+  if (FForm is Tgoverlayform) and Tgoverlayform(FForm).IsPrismContext then Exit;
   if FLoading then Exit;
 
   MainForm := Tgoverlayform(FForm);
@@ -1602,6 +1607,7 @@ var
   Ini: TIniFile;
   KeyVal, ProxyVal: string;
 begin
+  if (FForm is Tgoverlayform) and Tgoverlayform(FForm).IsPrismContext then Exit;
   if FLoading then Exit;  // Never save while loading — guards against queued Qt events
 
   IniPath := IncludeTrailingPathDelimiter(GetReShadeBasePath) + 'ReShade.ini';

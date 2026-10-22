@@ -2361,6 +2361,7 @@ var
   FileLines: TStringList;
   Modified: Boolean;
 begin
+  if FForm.IsPrismContext then Exit;
   // Check if any tweaks are active
   HasTweaks := FForm.GetGeneralCheckBox(0).Checked or FForm.GetGeneralCheckBox(1).Checked or
                FForm.GetGeneralCheckBox(2).Checked or FForm.GetGeneralCheckBox(3).Checked or

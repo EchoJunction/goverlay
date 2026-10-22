@@ -17,7 +17,7 @@ uses
   {$ENDIF}
   qtwidgets, fpreadjpeg, configmanager, IntfGraphics, Grids,
   configkeys, configfile, uihelpers, apputils, overlay_config, overlay_utils,
-  goverlay_strings, toggle_switch,
+  goverlay_strings, toggle_switch, gamecontext, prismprovider,
   floating_dock, finish_dialog, floating_overlay, pasplot_form;
 
 
@@ -1220,6 +1220,23 @@ type
     FBenchmarkStarted: Boolean;
     FBenchmarkStartTicks: Integer;
     FActiveGameName: string;
+    FActiveProfile: TActiveProfileContext;
+    FLastProfileSaveSucceeded: Boolean;
+    FProfileDirty: Boolean;
+    FPrismContextPanel: TPanel;
+    FPrismContextTitle, FPrismContextRoot, FPrismContextWarning, FPrismContextMessage: TLabel;
+    FPrismContentTopSpacing: Integer;
+    FPrismEnabledStates: array of record
+      Control: TControl; WasEnabled: Boolean;
+    end;
+    FPrismMenuStates: array of record
+      Item: TMenuItem;
+      WasVisible, WasEnabled: Boolean;
+    end;
+    FPrismControlStates: array of record
+      Control: TControl;
+      WasVisible, WasEnabled: Boolean;
+    end;
     FActiveGameIsNonSteam: Boolean;
 
     // Home tab fields (moved from private)
@@ -1566,6 +1583,15 @@ type
     function  GetLaunchCommand: string;
     function  GetGameConfigDir(const AGameName: string): string;
     function  GetGameLogDir(const AGameName: string): string;
+    function IsPrismContext: Boolean;
+    function ActiveProfileConfigDir: string;
+    function ActiveProfileLogDir: string;
+    function SelectPrismInstance(const Instance: TPrismInstance): Boolean;
+    function FlushPendingProfileEdits: Boolean;
+    procedure ClearActiveProfileContext;
+    procedure ApplyActiveProfileCapabilities;
+    procedure UpdatePrismContextPanel;
+    function TrySaveMangoHudConfig: Boolean;
     function  GetActiveCustomConfigFile: string;
     function  GetTargetCustomConfigFile: string;
     procedure LoadGameToggleStates;
@@ -1897,6 +1923,7 @@ begin
 end;
 procedure Tgoverlayform.protontricksManagerButtonClick(Sender: TObject);
 begin
+  if IsPrismContext then Exit;
   if not Assigned(protontricksform) then
     Application.CreateForm(Tprotontricksform, protontricksform);
   protontricksform.ShowModal;
@@ -1979,6 +2006,7 @@ procedure Tgoverlayform.checkupdBitBtnClick(Sender: TObject);
 var
   HasUpdates: Boolean;
 begin
+  if IsPrismContext then Exit;
   if Assigned(FOptiscalerUpdate) then
   begin
     // For Custom Build, this button is labeled "Select Folder..." - prompt user to select folder
@@ -2012,6 +2040,7 @@ end;
 
 procedure Tgoverlayform.tweaksLabelClick(Sender: TObject);
 begin
+  if IsPrismContext then Exit;
   DbgLog('>> tweaksLabelClick BEGIN');
   SetNavActive(4);
 
@@ -2059,6 +2088,7 @@ end;
 
 procedure Tgoverlayform.updateBitBtnClick(Sender: TObject);
 begin
+  if IsPrismContext then Exit;
   optversionComboBox.Visible := False;
   updateBitBtn.Visible := False;
   checkupdBitBtn.Visible := False;
@@ -2102,6 +2132,7 @@ procedure Tgoverlayform.usercustomBitBtnClick(Sender: TObject);
 var
   GameCfgDir: string;
 begin
+  if IsPrismContext then Exit;
   CUSTOMCFGFILE := GetActiveCustomConfigFile;
 
   GameCfgDir := GetGameConfigDir(FActiveGameName);
@@ -2138,6 +2169,7 @@ procedure Tgoverlayform.vkbasaltLabelClick(Sender: TObject);
 var
   GameCfgDir: string;
 begin
+  if IsPrismContext then Exit;
   DbgLog('>> vkbasaltLabelClick BEGIN');
 
   // In game mode, point vkBasalt config to the game-specific folder
@@ -2578,6 +2610,7 @@ end;
 
 procedure Tgoverlayform.LoadOptiScalerConfig;
 begin
+  if IsPrismContext then Exit;
   TOptiScalerTabHelper(FOptiScalerHelper).LoadOptiScalerConfig;
 end;
 
@@ -2599,9 +2632,21 @@ begin
   TMangoHudUiHelper(FMangoHelper).LoadMangoHudKeyValue(AKey, AValue);
 end;
 
+function Tgoverlayform.TrySaveMangoHudConfig: Boolean;
+begin
+  try
+    Result := TMangoHudUiHelper(FMangoHelper).TrySaveMangoHudConfig;
+  except
+    Result := False;
+    ShowStatusMessage(rsPrismSaveFailed);
+  end;
+  FLastProfileSaveSucceeded := Result;
+  FProfileDirty := not Result;
+end;
+
 procedure Tgoverlayform.SaveMangoHudConfig;
 begin
-  TMangoHudUiHelper(FMangoHelper).SaveMangoHudConfig;
+  FLastProfileSaveSucceeded := TrySaveMangoHudConfig;
   SaveVkNemuConfig;
 end;
 
@@ -2609,6 +2654,7 @@ procedure Tgoverlayform.VkNemuToggleChange(Sender: TObject);
 var
   AEnabled: Boolean;
 begin
+  if IsPrismContext then Exit;
   if not Assigned(FVkNemuToggle) then Exit;
 
   AEnabled := FVkNemuToggle.Checked;
@@ -2639,6 +2685,7 @@ end;
 
 procedure Tgoverlayform.VkNemuControlChange(Sender: TObject);
 begin
+  if IsPrismContext then Exit;
   UpdateVkNemuFlowDiagram;
   if not FLoadingConfig then
     TriggerAutoSave;
@@ -2649,6 +2696,7 @@ var
   IdleFps, TimeoutVal, DelayVal: Integer;
   InputMode: string;
 begin
+  if IsPrismContext then Exit('');
   if not Assigned(FVkNemuToggle) then
     Exit('');
 
@@ -2698,6 +2746,7 @@ var
   end;
 
 begin
+  if IsPrismContext then Exit;
   WasLoading := FLoadingConfig;
   FLoadingConfig := True;
   try
@@ -2781,6 +2830,7 @@ var
   end;
 
 begin
+  if IsPrismContext then Exit;
   if not Assigned(FVkNemuToggle) then Exit;
 
   AEnabled := FVkNemuToggle.Checked;
@@ -2826,6 +2876,7 @@ procedure Tgoverlayform.LoadVkBasaltConfig;
 var
   Settings: TVkBasaltSettings;
 begin
+  if IsPrismContext then Exit;
   FLoadingConfig := True;
   try
     // Reset all controls before loading so stale values from a previous config
@@ -2896,6 +2947,7 @@ procedure Tgoverlayform.reshadeTabSheetShow(Sender: TObject);
 var
   VkShadersDir: string;
 begin
+  if IsPrismContext then Exit;
   VkShadersDir := IncludeTrailingPathDelimiter(VKBASALTFOLDER) + 'reshade-shaders';
   if DirectoryExists(VkShadersDir) and (aveffectsListbox.Items.Count = 0) then
   begin
@@ -2929,6 +2981,7 @@ var
   RepoDir: string;
   ContentW: Integer;
 begin
+  if IsPrismContext then Exit;
   // Reload vkBasalt config whenever the tab becomes visible so that
   // changes saved from another context (or another tab switch) are reflected
   // in the UI. This fixes the issue where switching away and back to vkBasalt
@@ -2972,6 +3025,7 @@ var
   ci, gi: Integer;
   Sec: TPanel;
 begin
+  if IsPrismContext then Exit;
   LoadVkSumiConfig;
   // Reflow vkSumi tab with correct width when tab becomes visible
   if Assigned(FVsScrollBox) then
@@ -3029,6 +3083,7 @@ end;
 
 procedure Tgoverlayform.tweaksTabSheetShow(Sender: TObject);
 begin
+  if IsPrismContext then Exit;
   LoadTweaksFromFGMod;
   UpdateToolMissingDependencyBanners;
   if Assigned(FTweaksPaintBox) then
@@ -3037,6 +3092,7 @@ end;
 
 procedure Tgoverlayform.launchArgsTabSheetShow(Sender: TObject);
 begin
+  if IsPrismContext then Exit;
   LoadTweaksFromFGMod;
   UpdateToolMissingDependencyBanners;
   if Assigned(FArgsPaintBox) then
@@ -3094,6 +3150,13 @@ begin
   if not Assigned(statusBar) then Exit;
   
   statusBar.SimpleText := AMessage;
+  if IsPrismContext and Assigned(FPrismContextMessage) then
+  begin
+    if AMessage = Format(rsPrismSelectedContext, [FActiveProfile.DisplayName, FActiveProfile.InstanceRoot]) then
+      FPrismContextMessage.Caption := ''
+    else FPrismContextMessage.Caption := AMessage;
+    FPrismContextMessage.Hint := AMessage;
+  end;
   
   // Reset and start timer for auto-clear
   if Assigned(FStatusTimer) then
@@ -3107,7 +3170,9 @@ end;
 procedure Tgoverlayform.StatusTimerTick(Sender: TObject);
 begin
   if Assigned(statusBar) then
-    statusBar.SimpleText := '';
+    if IsPrismContext then
+      statusBar.SimpleText := Format(rsPrismSelectedContext, [FActiveProfile.DisplayName, FActiveProfile.InstanceRoot])
+    else statusBar.SimpleText := '';
   
   if Assigned(FStatusTimer) then
     FStatusTimer.Enabled := False;
@@ -3399,6 +3464,7 @@ end;
 // Dock: Preview button — forwards to the existing pascube / vkcube launch logic
 procedure Tgoverlayform.DockPreviewClick(Sender: TObject);
 begin
+  if IsPrismContext then Exit;
   PreviewBtnClick(nil);
 end;
 
@@ -3423,6 +3489,7 @@ end;
 // Dock: Finish Config button — opens the Finish Configuration modal dialog
 procedure Tgoverlayform.DockFinishClick(Sender: TObject);
 begin
+  if IsPrismContext then Exit;
   ShowFinishDialog(Self, GetLaunchCommand, FActiveGameName, FActiveGameIsNonSteam);
 end;
 
@@ -5093,6 +5160,7 @@ end;
 
 procedure Tgoverlayform.StartCube;
 begin
+  if IsPrismContext then Exit;
   if not FCubeAutoLaunch then Exit;
   StopCube; // Prevent duplicates
   RestoreIfMaximized;
@@ -5268,6 +5336,7 @@ end;
 
 procedure Tgoverlayform.geSpeedButtonClick(Sender: TObject);
 begin
+  if IsPrismContext then Exit;
   // Obsolete: global enable button is no longer used
 end;
 
@@ -5472,6 +5541,7 @@ var
   BannerTitle, BannerDesc: string;
   Lbl: TLabel;
 begin
+  if IsPrismContext then begin ApplyActiveProfileCapabilities; Exit; end;
   MangoInstalled := IsMangoHudInstalled;
   VkInstalled := IsVkBasaltInstalled;
   SumiInstalled := IsVkSumiInstalled;
@@ -5777,6 +5847,7 @@ var
   IsArg: Boolean;
   ArgDesc: string;
 begin
+  if IsPrismContext then Exit;
   Val := Trim(InputBox('Add Environment Variable or Launch Argument',
                        'Enter variable (KEY=VAL) or argument (-arg / +arg):', ''));
   if Val = '' then Exit;
@@ -5816,6 +5887,7 @@ var
   Row: Integer;
   ArgDesc: string;
 begin
+  if IsPrismContext then Exit;
   if not Assigned(FTweaksGrid) then Exit;
   Row := FTweaksGrid.Row;
   // Only allow deleting custom rows (below predefined)
@@ -5836,6 +5908,7 @@ end;
 
 procedure Tgoverlayform.LoadTweaksFromFGMod;
 begin
+  if IsPrismContext then Exit;
   FLoadingConfig := True;
   try
     TTweaksMD3Helper(FTweaksHelper).LoadTweaksFromFGMod;
@@ -5878,6 +5951,8 @@ var
   WasInGameMode: Boolean;
   LastGameName: string;
 begin
+  if not FlushPendingProfileEdits then Exit;
+  ClearActiveProfileContext;
   WasInGameMode := FActiveGameName <> '';
   LastGameName := FActiveGameName;
 
@@ -5953,8 +6028,8 @@ begin
   // In game mode, point MangoHud config to the game-specific folder
   if FActiveGameName <> '' then
   begin
-    GameCfgDir := GetGameConfigDir(FActiveGameName);
-    if not DirectoryExists(GameCfgDir) then
+    GameCfgDir := ActiveProfileConfigDir;
+    if not IsPrismContext and not DirectoryExists(GameCfgDir) then
       ForceDirectories(GameCfgDir);
     MANGOHUDCFGFILE := GameCfgDir + 'MangoHud.conf';
   end
@@ -5997,6 +6072,7 @@ UpdateGlobalEnableMenuItemVisibility;
 LoadMangoHudConfig;
   UpdateToolMissingDependencyBanners;
 
+ApplyActiveProfileCapabilities;
 DbgLog('<< mangohudLabelClick END');
 end;
 
@@ -6025,6 +6101,7 @@ end;
 
 procedure Tgoverlayform.mesaRadioButtonChange(Sender: TObject);
 begin
+  if IsPrismContext then Exit;
   if mesaRadioButton.Checked then
   begin
       if Assigned(gpudriverComboBox) and (gpudriverComboBox.ItemIndex <> 0) then
@@ -6041,6 +6118,7 @@ end;
 
 procedure Tgoverlayform.nvidiaRadioButtonChange(Sender: TObject);
 begin
+  if IsPrismContext then Exit;
   if nvidiaRadioButton.Checked then
   begin
       if Assigned(gpudriverComboBox) and (gpudriverComboBox.ItemIndex <> 1) then
@@ -6057,6 +6135,7 @@ end;
 
 procedure Tgoverlayform.gpudriverComboBoxChange(Sender: TObject);
 begin
+  if IsPrismContext then Exit;
   if gpudriverComboBox = nil then Exit;
   case gpudriverComboBox.ItemIndex of
     0: if Assigned(mesaRadioButton) then mesaRadioButton.Checked := True;
@@ -6069,6 +6148,7 @@ var
   Idx: Integer;
   OptVer: string;
 begin
+  if IsPrismContext then Exit;
   if Assigned(optiscalerRadioButton) and not optiscalerRadioButton.Checked then Exit;
 
   // Conflict check with AFMF
@@ -6171,6 +6251,7 @@ procedure Tgoverlayform.dlssenablerRadioButtonClick(Sender: TObject);
 var
   Idx: Integer;
 begin
+  if IsPrismContext then Exit;
   if Assigned(dlssenablerRadioButton) and not dlssenablerRadioButton.Checked then Exit;
 
   // Conflict check with AFMF
@@ -6245,6 +6326,7 @@ end;
 
 procedure Tgoverlayform.noneUpscalerRadioButtonClick(Sender: TObject);
 begin
+  if IsPrismContext then Exit;
   if Assigned(noneUpscalerRadioButton) and not noneUpscalerRadioButton.Checked then Exit;
 
   if Assigned(noneUpscalerRadioButton) then
@@ -6328,6 +6410,7 @@ procedure Tgoverlayform.dlssnrRadioButtonClick(Sender: TObject);
 var
   Idx: Integer;
 begin
+  if IsPrismContext then Exit;
   if Assigned(dlssnrRadioButton) and not dlssnrRadioButton.Checked then Exit;
   if Assigned(dlssnrRadioButton) then
   begin
@@ -6383,6 +6466,7 @@ var
   CompileSuccess: Boolean;
   ErrDetail: string;
 begin
+  if IsPrismContext then Exit;
   if Assigned(helixsrRadioButton) and not helixsrRadioButton.Checked then Exit;
 
   if Assigned(helixsrRadioButton) then
@@ -6566,6 +6650,7 @@ end;
 
 procedure Tgoverlayform.optiscalerLabelClick(Sender: TObject);
 begin
+  if IsPrismContext then Exit;
   DbgLog('>> optiscalerLabelClick BEGIN');
   SetNavActive(3);
 
@@ -6931,11 +7016,13 @@ end;
 
 procedure Tgoverlayform.blacklistBitBtnClick(Sender: TObject);
 begin
+  if IsPrismContext then Exit;
   blacklistForm.ShowModal; // Form show as modal window
 end;
 
 procedure Tgoverlayform.blacklistMenuItemClick(Sender: TObject);
 begin
+  if IsPrismContext then Exit;
    blacklistForm.ShowModal; // Form show as modal window
 end;
 
@@ -6987,6 +7074,7 @@ end;
 
 procedure Tgoverlayform.patcherlistLabelClick(Sender: TObject);
 begin
+  if IsPrismContext then Exit;
   try
     if not OpenURL('https://github.com/optiscaler/OptiPatcher/blob/main/GameSupport.md') then
       ShowMessage(rsLinkOpenFailed);
@@ -7067,7 +7155,7 @@ begin
   // Steam Flatpak, and bgmod.conf — no duplication needed here.
   SaveMangoHudConfig;
 
-  ShowSavedStatus;
+  if FLastProfileSaveSucceeded then ShowSavedStatus;
   SyncAllToggles;
 end;
 
@@ -7401,6 +7489,7 @@ var
   selectedFolder: string;
 
   begin
+    if IsPrismContext then Exit;
     // Dialog to select folder
     with TSelectDirectoryDialog.Create(Self) do
     begin
@@ -7606,6 +7695,7 @@ end;
 
 procedure Tgoverlayform.UpdateDockMenuItemsVisibility;
 begin
+  if IsPrismContext then Exit;
   // Menu items: "Save options" and "Load config" (when available) come first, followed by "Open config folder" and "Open log folder"
   openConfigFileMenuItem.Caption := 'Open config folder';
   openLogFileMenuItem.Caption := 'Open log folder';
@@ -7676,11 +7766,13 @@ end;
 
 procedure Tgoverlayform.SaveTweaksConfig;
 begin
+  if IsPrismContext then Exit;
   TTweaksMD3Helper(FTweaksHelper).SaveTweaksConfig;
 end;
 
 procedure Tgoverlayform.SaveOptiScalerConfig(ASilent: Boolean);
 begin
+  if IsPrismContext then Exit;
   TOptiScalerTabHelper(FOptiScalerHelper).SaveOptiScalerConfig(ASilent);
 end;
 
@@ -7690,6 +7782,7 @@ var
   ErrMsg: string;
   i: Integer;
 begin
+  if IsPrismContext then Exit;
   Settings.SumiFolder := VKSUMIFOLDER;
   Settings.SumiCfgFile := VKSUMICFGFILE;
   Settings.Version := GVERSION;
@@ -7749,6 +7842,7 @@ var
   Settings: TVkSumiSettings;
   i: Integer;
 begin
+  if IsPrismContext then Exit;
   FLoadingConfig := True;
   try
     if Assigned(FVsEnabledCB) then
@@ -7836,6 +7930,7 @@ var
   Settings: TVkBasaltSettings;
   ErrMsg: string;
 begin
+  if IsPrismContext then Exit;
   if VKBASALTFOLDER = '' then
   begin
     ShowMessage(rsVkBasaltDirMissing);
@@ -7889,6 +7984,19 @@ var
   GlobalMangoHudFile: string;  // Global MangoHud config path (for blacklist — never game-specific)
   BlacklistCfg: TConfigFile;
 begin
+  FLastProfileSaveSucceeded := False;
+  if IsPrismContext then
+  begin
+    if (goverlayPageControl.ActivePage = presetTabSheet) or
+       (goverlayPageControl.ActivePage = visualTabSheet) or
+       (goverlayPageControl.ActivePage = performanceTabSheet) or
+       (goverlayPageControl.ActivePage = metricsTabSheet) or
+       (goverlayPageControl.ActivePage = extrasTabSheet) then
+      FLastProfileSaveSucceeded := TrySaveMangoHudConfig;
+    if FLastProfileSaveSucceeded then ShowStatusMessage(rsPrismLocalSaved);
+    Exit;
+  end;
+  FLastProfileSaveSucceeded := True;
   // ################### SAVE TWEAKS TAB SETTINGS
   if (goverlayPageControl.ActivePage = tweaksTabSheet) or (goverlayPageControl.ActivePage = launchArgsTabSheet) then
   begin
@@ -7930,6 +8038,7 @@ begin
 
   // Save MangoHud configuration
     SaveMangoHudConfig;
+    if not FLastProfileSaveSucceeded then Exit;
 
   // Popup a notification
     // SendNotification('MangoHud', 'Configuration saved', GetIconFile);
@@ -8011,6 +8120,7 @@ end; // ########################################      end save button click     
 
 procedure Tgoverlayform.savecustomMenuItemClick(Sender: TObject);
 begin
+  if IsPrismContext then Exit;
   // Save current config
   saveBitbtn.Click;
 
@@ -8032,6 +8142,7 @@ var
   ConfigDir: string;
   IsLsfg: Boolean;
 begin
+  if IsPrismContext then begin Result := ActiveProfileConfigDir + 'MangoHud.conf'; Exit; end;
   Result := '';
   ConfigDir := IncludeTrailingPathDelimiter(GetGameConfigDir(FActiveGameName));
 
@@ -8122,6 +8233,7 @@ var
   LogDir, ConfigDir: string;
   IsLsfg: Boolean;
 begin
+  if IsPrismContext then Exit(ActiveProfileLogDir + 'mangohud.log');
   LogDir := GetGameLogDir(FActiveGameName);
   ConfigDir := IncludeTrailingPathDelimiter(GetGameConfigDir(FActiveGameName));
   Result := '';
@@ -8201,6 +8313,7 @@ var
   TargetFile: string;
   TargetDir: string;
 begin
+  if IsPrismContext then Exit;
   TargetFile := GetActiveTabConfigFile;
 
   if TargetFile <> '' then
@@ -8220,6 +8333,7 @@ procedure Tgoverlayform.openLogFileMenuItemClick(Sender: TObject);
 var
   TargetDir: string;
 begin
+  if IsPrismContext then Exit;
   TargetDir := GetGameLogDir(FActiveGameName);
 
   if TargetDir <> '' then
@@ -8232,6 +8346,7 @@ end;
 
 procedure Tgoverlayform.lsfgMigrationMenuItemClick(Sender: TObject);
 begin
+  if IsPrismContext then Exit;
   ShowLsfgMigrationDialog(Self, FLosslessScalingHelper);
 end;
 
@@ -8243,6 +8358,7 @@ var
   ToolName: string;
   ConfigLines: TStringList;
 begin
+  if IsPrismContext then Exit;
   OpenDlg := TOpenDialog.Create(Self);
   try
     OpenDlg.Filter := 'Configuration files (*.conf)|*.conf|All files (*.*)|*.*';
@@ -8299,6 +8415,7 @@ var
   SelectedDirectory: string;
   DestinationFile: string;
 begin
+  if IsPrismContext then Exit;
   // Show directory selection dialog
   with TSelectDirectoryDialog.Create(Self) do
   begin
@@ -8492,6 +8609,7 @@ var
   InPresetSection: Boolean;
   PresetAlreadyExists: Boolean;
 begin
+  if IsPrismContext then Exit;
   // Use XDG-compliant path with proper Flatpak support (HOST_XDG_CONFIG_HOME)
   ConfigDir := GetMangoHudConfigDir();
   PresetsFilePath := ConfigDir + '/presets.conf';
@@ -8652,6 +8770,7 @@ var
   DialogResult: Integer;
   IsCurrentlyEnabled: Boolean;
 begin
+  if IsPrismContext then Exit;
   try
     // Check current state
     IsCurrentlyEnabled := IsMangoHudGloballyEnabled();
@@ -8742,6 +8861,7 @@ procedure Tgoverlayform.gamemodeCheckBoxClick(Sender: TObject);
 var
   DialogResult: Integer;
 begin
+  if IsPrismContext then Exit;
   if FLoadingConfig then Exit;
 
   // Only show warning in Flatpak when checkbox is being checked (enabled)
@@ -8767,6 +8887,7 @@ var
   FS: TFileStream;
   Readable: Boolean;
 begin
+  if IsPrismContext then Exit;
   if FLoadingConfig then Exit;
   if not cpupowerCheckBox.Checked then Exit;
   if not IsIntelCPU then Exit;
@@ -8971,6 +9092,7 @@ end;
 
 procedure Tgoverlayform.NavToolToggleClick(Sender: TObject);
 begin
+  if IsPrismContext then Exit;
   TSidebarNavHelper(FNavHelper).NavToolToggleClick(Sender);
 end;
 
@@ -8991,6 +9113,7 @@ end;
 
 procedure Tgoverlayform.SetGameToolEnabled(const AGameName: string; AToolIdx: Integer; AEnabled: Boolean);
 begin
+  if IsPrismContext then Exit;
   TSidebarNavHelper(FNavHelper).SetGameToolEnabled(AGameName, AToolIdx, AEnabled);
 end;
 
@@ -9099,7 +9222,15 @@ end;
 procedure Tgoverlayform.TriggerAutoSave;
 begin
   if FLoadingConfig or FClosing then Exit;
+  if IsPrismContext or
+     (goverlayPageControl.ActivePage = presetTabSheet) or
+     (goverlayPageControl.ActivePage = visualTabSheet) or
+     (goverlayPageControl.ActivePage = performanceTabSheet) or
+     (goverlayPageControl.ActivePage = metricsTabSheet) or
+     (goverlayPageControl.ActivePage = extrasTabSheet) then
+    FProfileDirty := True;
   saveBitBtnClick(nil);
+  if not FLastProfileSaveSucceeded then Exit;
   ShowSavedStatus;
   if Assigned(FFADock) then
     FFADock.TriggerSyncPulse;
@@ -9108,6 +9239,13 @@ end;
 procedure Tgoverlayform.StartAutoSaveTimer;
 begin
   if FLoadingConfig then Exit;
+  if IsPrismContext or
+     (goverlayPageControl.ActivePage = presetTabSheet) or
+     (goverlayPageControl.ActivePage = visualTabSheet) or
+     (goverlayPageControl.ActivePage = performanceTabSheet) or
+     (goverlayPageControl.ActivePage = metricsTabSheet) or
+     (goverlayPageControl.ActivePage = extrasTabSheet) then
+    FProfileDirty := True;
   if Assigned(autoSaveTimer) then
   begin
     autoSaveTimer.Enabled := False;
@@ -9118,6 +9256,7 @@ end;
 
 procedure Tgoverlayform.ShowSavedStatus;
 begin
+  if IsPrismContext then begin ShowStatusMessage(rsPrismLocalSaved); Exit; end;
   if Assigned(FFloatingToast) then
     FFloatingToast.ShowToast('Settings saved')
   else if Assigned(savedStatusLabel) then
@@ -9159,16 +9298,19 @@ end;
 
 procedure Tgoverlayform.RemoveTweaksFromGameFGMod(const AFGModFile: string);
 begin
+  if IsPrismContext then Exit;
   TSidebarNavHelper(FNavHelper).RemoveTweaksFromGameFGMod(AFGModFile);
 end;
 
 procedure Tgoverlayform.RemoveOptiScalerGameFiles(const AGameCfgDir: string);
 begin
+  if IsPrismContext then Exit;
   TSidebarNavHelper(FNavHelper).RemoveOptiScalerGameFiles(AGameCfgDir);
 end;
 
 procedure Tgoverlayform.CopyOptiScalerGameFiles(const AGameCfgDir: string);
 begin
+  if IsPrismContext then Exit;
   TSidebarNavHelper(FNavHelper).CopyOptiScalerGameFiles(AGameCfgDir);
 end;
 
@@ -9220,6 +9362,7 @@ end;
 procedure Tgoverlayform.ApplyNavWidth(AWidth: Integer);
 begin
   TSidebarNavHelper(FNavHelper).ApplyNavWidth(AWidth);
+  ApplyActiveProfileCapabilities;
 end;
 
 procedure Tgoverlayform.FormResize(Sender: TObject);
@@ -9645,6 +9788,7 @@ end;
 
 procedure Tgoverlayform.GplotBtnClick(Sender: TObject);
 begin
+  if IsPrismContext then Exit;
   ShowGplotDialog(Self, FActiveGameName);
 end;
 
@@ -9652,6 +9796,7 @@ procedure Tgoverlayform.CaptureBtnClick(Sender: TObject);
 var
   Lbl: TLabel;
 begin
+  if IsPrismContext then Exit;
   if not Assigned(Sender) then Exit;
   
   // The clicked button is both the trigger and the display target
@@ -9927,6 +10072,7 @@ end;
 
 procedure Tgoverlayform.optiscalerTabSheetShow(Sender: TObject);
 begin
+  if IsPrismContext then Exit;
   FLastLosslessShowTick := 0;
   FLoadingConfig := True;
   try
@@ -9959,6 +10105,7 @@ end;
 
 procedure Tgoverlayform.losslessScalingTabSheetShow(Sender: TObject);
 begin
+  if IsPrismContext then Exit;
   if FLoadingConfig then Exit;
   if (FActiveGameName = FLastLosslessGame) and (GetTickCount64 - FLastLosslessShowTick < 50) then Exit;
   FLastLosslessShowTick := GetTickCount64;
@@ -10262,6 +10409,7 @@ end;
 
 function Tgoverlayform.CloneGlobalConfigToGame(const AGameName: string; const AGamePath: string): Boolean;
 begin
+  if IsPrismContext then Exit(False);
   if Assigned(FGamesHelper) then
     Result := TGamesTabHelper(FGamesHelper).CloneGlobalConfigToGame(AGameName, AGamePath)
   else
@@ -10270,12 +10418,14 @@ end;
 
 procedure Tgoverlayform.GameCardCloneGlobalClick(Sender: TObject);
 begin
+  if IsPrismContext then Exit;
   if Assigned(FGamesHelper) then
     TGamesTabHelper(FGamesHelper).GameCardCloneGlobalClick(Sender);
 end;
 
 procedure Tgoverlayform.CloneGlobalDockMenuItemClick(Sender: TObject);
 begin
+  if IsPrismContext then Exit;
   if FActiveGameName = '' then Exit;
 
   if MessageDlg('Goverlay',
@@ -10378,6 +10528,10 @@ end;
 
 procedure Tgoverlayform.HomeGlobalBtnClick(Sender: TObject);
 begin
+  if not FlushPendingProfileEdits then Exit;
+  FActiveGameName := '';
+  ClearActiveProfileContext;
+  LoadGameToggleStates;
   THomeTabHelper(FHomeHelper).HomeGlobalBtnClick(Sender);
 end;
 
@@ -10408,6 +10562,7 @@ end;
 
 procedure Tgoverlayform.ClearConfigBtnClick(Sender: TObject);
 begin
+  if IsPrismContext then Exit;
   THomeTabHelper(FHomeHelper).ClearConfigBtnClick(Sender);
 end;
 
@@ -10465,6 +10620,16 @@ end;
 
 procedure Tgoverlayform.ShowHomeTab(Sender: TObject);
 begin
+  if not FlushPendingProfileEdits then Exit;
+  if IsPrismContext then
+  begin
+    FActiveGameName := '';
+    MANGOHUDCFGFILE := GetGameConfigDir('') + 'MangoHud.conf';
+    VKBASALTCFGFILE := IncludeTrailingPathDelimiter(GetVkBasaltConfigDir()) + 'vkBasalt.conf';
+    VKSUMICFGFILE := IncludeTrailingPathDelimiter(GetVkSumiConfigDir()) + 'vkSumi.conf';
+    ClearActiveProfileContext;
+    LoadGameToggleStates;
+  end;
   THomeTabHelper(FHomeHelper).ShowHomeTab(Sender);
 end;
 
@@ -10707,6 +10872,233 @@ begin
             'goverlay/gameconfig/' + GameDirName + '/';
 end;
 
+function Tgoverlayform.IsPrismContext: Boolean;
+begin
+  Result := FActiveProfile.Source = psPrism;
+end;
+
+function Tgoverlayform.ActiveProfileConfigDir: string;
+begin
+  if IsPrismContext then Result := FActiveProfile.ConfigDir
+  else Result := GetGameConfigDir(FActiveGameName);
+end;
+
+function Tgoverlayform.ActiveProfileLogDir: string;
+begin
+  if IsPrismContext then Result := FActiveProfile.LogDir
+  else Result := GetGameLogDir(FActiveGameName);
+end;
+
+function Tgoverlayform.FlushPendingProfileEdits: Boolean;
+begin
+  Result := True;
+  if not FProfileDirty and (not Assigned(autoSaveTimer) or not autoSaveTimer.Enabled) then Exit;
+  autoSaveTimer.Enabled := False;
+  try
+    saveBitBtnClick(nil);
+    Result := FLastProfileSaveSucceeded;
+  except
+    Result := False;
+    ShowStatusMessage(rsPrismSaveFailed);
+  end;
+  if not Result then autoSaveTimer.Enabled := True;
+end;
+
+procedure Tgoverlayform.ClearActiveProfileContext;
+begin
+  if IsPrismContext and Assigned(statusBar) then statusBar.SimpleText := '';
+  FActiveProfile := Default(TActiveProfileContext);
+  FProfileDirty := False;
+  UpdatePrismContextPanel;
+  ApplyActiveProfileCapabilities;
+end;
+
+function Tgoverlayform.SelectPrismInstance(const Instance: TPrismInstance): Boolean;
+var Context: TActiveProfileContext; WasLoading: Boolean;
+begin
+  Result := False;
+  if not PrismProfileContext(Instance, TConfigManager.GetHostDataDir, Context) then Exit;
+  if not FlushPendingProfileEdits then Exit;
+  WasLoading := FLoadingConfig;
+  FLoadingConfig := True;
+  try
+    StopCube;
+    FActiveProfile := Context;
+    FActiveGameName := Context.DisplayName;
+    FActiveGameIsNonSteam := False;
+    MANGOHUDCFGFILE := Context.ConfigDir + 'MangoHud.conf';
+    FLaunchCommand := '';
+    UpdatePrismContextPanel;
+    ApplyActiveProfileCapabilities;
+    mangohudLabelClick(nil);
+    logfolderEdit.Text := Context.LogDir;
+    ApplyActiveProfileCapabilities;
+    ShowStatusMessage(Format(rsPrismSelectedContext, [Context.DisplayName, Context.InstanceRoot]));
+    Result := True;
+  finally
+    FLoadingConfig := WasLoading;
+  end;
+end;
+
+procedure Tgoverlayform.UpdatePrismContextPanel;
+  procedure MakeLine(var L: TLabel; Y, H: Integer);
+  begin
+    L := TLabel.Create(Self); L.Parent := FPrismContextPanel;
+    L.AutoSize := False; L.SetBounds(12, Y, Max(1, FPrismContextPanel.ClientWidth - 24), H);
+    L.Anchors := [akLeft, akTop, akRight]; L.Transparent := True;
+    L.ShowAccelChar := False;
+    L.Font.Color := clWhite; L.Font.Size := 9; L.ShowHint := True;
+  end;
+begin
+  if not IsPrismContext then
+  begin
+    if Assigned(FPrismContextPanel) and FPrismContextPanel.Visible then
+    begin
+      FPrismContextPanel.Visible := False;
+      goverlayPageControl.BorderSpacing.Top := FPrismContentTopSpacing;
+    end;
+    Exit;
+  end;
+  if not Assigned(FPrismContextPanel) then
+  begin
+    FPrismContextPanel := TPanel.Create(Self);
+    FPrismContextPanel.Parent := goverlayPanel;
+    FPrismContextPanel.BevelOuter := bvNone;
+    FPrismContextPanel.ParentBackground := False;
+    FPrismContextPanel.Color := RGBToColor(32, 40, 58);
+    FPrismContextPanel.Caption := '';
+    FPrismContextPanel.SetBounds(0, 0, goverlayPanel.ClientWidth, 104);
+    FPrismContextPanel.Anchors := [akLeft, akTop, akRight];
+    MakeLine(FPrismContextTitle, 8, 20);
+    FPrismContextTitle.Font.Style := [fsBold];
+    MakeLine(FPrismContextRoot, 30, 18);
+    FPrismContextRoot.Font.Color := clSilver;
+    MakeLine(FPrismContextWarning, 52, 20);
+    MakeLine(FPrismContextMessage, 76, 20);
+  end;
+  if not FPrismContextPanel.Visible then
+    FPrismContentTopSpacing := goverlayPageControl.BorderSpacing.Top;
+  { The first creation is visible by default, so capture the legacy gap then. }
+  if goverlayPageControl.BorderSpacing.Top < FPrismContextPanel.Height then
+    FPrismContentTopSpacing := goverlayPageControl.BorderSpacing.Top;
+  FPrismContextPanel.Visible := True;
+  goverlayPageControl.BorderSpacing.Top := FPrismContextPanel.Height;
+  FPrismContextPanel.BringToFront;
+  FPrismContextTitle.Caption := rsPrismCardSource + ' · ' + FActiveProfile.DisplayName;
+  FPrismContextTitle.Hint := FActiveProfile.DisplayName;
+  FPrismContextRoot.Caption := FActiveProfile.InstanceRoot;
+  FPrismContextRoot.Hint := FActiveProfile.InstanceRoot;
+  FPrismContextWarning.Caption := rsPrismLocalOnly;
+  FPrismContextWarning.Hint := rsPrismLocalOnly;
+  FPrismContextMessage.Caption := '';
+end;
+
+procedure Tgoverlayform.ApplyActiveProfileCapabilities;
+var I: Integer;
+  procedure EnableEditor(Control: TControl);
+  var N, J: Integer;
+  begin
+    if Control = nil then Exit;
+    N := Length(FPrismEnabledStates); SetLength(FPrismEnabledStates, N + 1);
+    FPrismEnabledStates[N].Control := Control;
+    FPrismEnabledStates[N].WasEnabled := Control.Enabled;
+    Control.Enabled := True;
+    if Control is TWinControl then
+      for J := 0 to TWinControl(Control).ControlCount - 1 do
+        EnableEditor(TWinControl(Control).Controls[J]);
+  end;
+  procedure Hide(Control: TControl);
+  var N: Integer;
+  begin
+    if Control = nil then Exit;
+    N := Length(FPrismControlStates);
+    SetLength(FPrismControlStates, N + 1);
+    FPrismControlStates[N].Control := Control;
+    FPrismControlStates[N].WasVisible := Control.Visible;
+    FPrismControlStates[N].WasEnabled := Control.Enabled;
+    Control.Visible := False; Control.Enabled := False;
+  end;
+  procedure HideLinked(Parent: TWinControl);
+  var J: Integer; C: TControl; Box: TCheckBox;
+  begin
+    for J := 0 to Parent.ControlCount - 1 do
+    begin
+      C := Parent.Controls[J];
+      if C is TToggleSwitch then
+      begin
+        Box := TToggleSwitch(C).LinkedCheckBox;
+        if (Box = wineCheckBox) or (Box = winesyncCheckBox) or
+           (Box = vkbasaltstatusCheckBox) or (Box = fsrCheckBox) or
+           (Box = hdrCheckBox) or (Box = fcatCheckBox) or
+           (Box = engineversionCheckBox) or (Box = engineshortCheckBox) or
+           (Box = dxapiCheckBox) or (Box = fexstatsCheckBox) then Hide(C);
+      end;
+      if C is TWinControl then HideLinked(TWinControl(C));
+    end;
+  end;
+  procedure HideMenu(Item: TMenuItem);
+  var N: Integer;
+  begin
+    if Item = nil then Exit;
+    N := Length(FPrismMenuStates); SetLength(FPrismMenuStates, N + 1);
+    FPrismMenuStates[N].Item := Item;
+    FPrismMenuStates[N].WasVisible := Item.Visible;
+    FPrismMenuStates[N].WasEnabled := Item.Enabled;
+    Item.Visible := False; Item.Enabled := False;
+  end;
+begin
+  if not IsPrismContext then
+  begin
+    for I := 0 to High(FPrismControlStates) do
+    begin
+      FPrismControlStates[I].Control.Visible := FPrismControlStates[I].WasVisible;
+      FPrismControlStates[I].Control.Enabled := FPrismControlStates[I].WasEnabled;
+    end;
+    for I := 0 to High(FPrismMenuStates) do
+    begin
+      FPrismMenuStates[I].Item.Visible := FPrismMenuStates[I].WasVisible;
+      FPrismMenuStates[I].Item.Enabled := FPrismMenuStates[I].WasEnabled;
+    end;
+    for I := 0 to High(FPrismEnabledStates) do
+      FPrismEnabledStates[I].Control.Enabled := FPrismEnabledStates[I].WasEnabled;
+    FPrismEnabledStates := nil;
+    FPrismMenuStates := nil; FPrismControlStates := nil;
+    Exit;
+  end;
+  if Length(FPrismControlStates) = 0 then
+  begin
+    { Undo legacy tool gating once, before loading/resetting the new profile.
+      Later capability refreshes preserve dependencies established by the loader. }
+    EnableEditor(presetTabSheet); EnableEditor(visualTabSheet);
+    EnableEditor(performanceTabSheet); EnableEditor(metricsTabSheet); EnableEditor(extrasTabSheet);
+    for I := 2 to High(FNavItems) do Hide(FNavItems[I]);
+    for I := 0 to High(FNavToolBtns) do Hide(FNavToolBtns[I]);
+    Hide(geSpeedButton); Hide(commandPanel); Hide(FPreviewBtn);
+    Hide(logfolderBitBtn); Hide(logfolderEdit); HideMenu(savecustomMenuItem);
+    HideMenu(loadconfigMenuItem); HideMenu(saveasMenuItem); HideMenu(openConfigFileMenuItem);
+    HideMenu(openLogFileMenuItem); HideMenu(globalenableMenuItem);
+    Hide(FPresetLayoutCards[4]); Hide(FVkNemuSec); Hide(FVsyncRows[0]);
+    Hide(wineCheckBox); Hide(winesyncCheckBox); Hide(vkbasaltstatusCheckBox);
+    Hide(fsrCheckBox); Hide(hdrCheckBox); Hide(fcatCheckBox);
+    Hide(engineversionCheckBox); Hide(engineshortCheckBox); Hide(dxapiCheckBox);
+    Hide(fexstatsCheckBox); Hide(wineLabel); Hide(wineColorButton);
+    Hide(engineColorButton);
+    HideLinked(Self);
+    HideMenu(FWinePrefixMenuItem); HideMenu(FCloneGlobalMenuItem);
+    HideMenu(blacklistMenuItem);
+    HideMenu(deckpreset1MenuItem); HideMenu(deckpreset2MenuItem);
+    HideMenu(deckpreset3MenuItem); HideMenu(deckpreset4MenuItem);
+  end;
+  for I := 0 to High(FPrismControlStates) do
+  begin
+    FPrismControlStates[I].Control.Visible := False;
+    FPrismControlStates[I].Control.Enabled := False;
+  end;
+  commandPanel.Visible := False;
+  if Assigned(FFADock) then FFADock.UpdateForTab(False, False, False, True, False);
+  SetSaveBtnEnabled(True);
+end;
+
 function Tgoverlayform.GetGameLogDir(const AGameName: string): string;
 var
   BaseLogs: string;
@@ -10722,6 +11114,7 @@ function Tgoverlayform.GetTargetCustomConfigFile: string;
 var
   GameCfgDir: string;
 begin
+  if IsPrismContext then begin Result := ActiveProfileConfigDir + 'custom.conf'; Exit; end;
   if FActiveGameName <> '' then
   begin
     GameCfgDir := GetGameConfigDir(FActiveGameName);
@@ -10739,6 +11132,7 @@ function Tgoverlayform.GetActiveCustomConfigFile: string;
 var
   GameCfgDir, GameCustom: string;
 begin
+  if IsPrismContext then begin Result := ActiveProfileConfigDir + 'custom.conf'; Exit; end;
   if FActiveGameName <> '' then
   begin
     GameCfgDir := GetGameConfigDir(FActiveGameName);
@@ -10769,6 +11163,7 @@ end;
 // Returns an empty string in global mode.
 function Tgoverlayform.GetMangoHudConfigEnvPrefix: string;
 begin
+  if IsPrismContext then Exit('');
   if FActiveGameName <> '' then
     Result := 'MANGOHUD_CONFIGFILE="' + GetGameConfigDir(FActiveGameName) + 'MangoHud.conf" '
   else
@@ -10778,6 +11173,7 @@ end;
 // Returns MANGOHUD_CONFIGFILE + MANGOHUD=1 only when MangoHud is enabled.
 function Tgoverlayform.GetMangoHudLaunchEnv: string;
 begin
+  if IsPrismContext then Exit('');
   if not FNavToolEnabled[0] then
     Result := 'MANGOHUD=0 DISABLE_MANGOHUD=1 '  // Explicitly suppress MangoHud layer
   else
@@ -10787,6 +11183,7 @@ end;
 // Returns VKBASALT_CONFIG_FILE + ENABLE_VKBASALT=1 only when vkBasalt is enabled.
 function Tgoverlayform.GetVkBasaltLaunchEnv: string;
 begin
+  if IsPrismContext then Exit('');
   if not FNavToolEnabled[1] then
     Result := 'ENABLE_VKBASALT=0 '
   else
@@ -10796,6 +11193,7 @@ end;
 // Returns VKSUMI_CONFIG_FILE + ENABLE_VKSUMI=1 only when Post processing is enabled.
 function Tgoverlayform.GetVkSumiLaunchEnv: string;
 begin
+  if IsPrismContext then Exit('');
   if not FNavToolEnabled[1] then
     Result := 'ENABLE_VKSUMI=0 '
   else
@@ -10804,6 +11202,7 @@ end;
 
 function Tgoverlayform.GetVkBasaltConfigEnvPrefix: string;
 begin
+  if IsPrismContext then Exit('');
   if FActiveGameName <> '' then
     Result := 'VKBASALT_CONFIG_FILE="' + GetGameConfigDir(FActiveGameName) + 'vkBasalt.conf" '
   else
@@ -10812,6 +11211,7 @@ end;
 
 function Tgoverlayform.GetVkSumiConfigEnvPrefix: string;
 begin
+  if IsPrismContext then Exit('');
   if FActiveGameName <> '' then
     Result := 'VKSUMI_CONFIG_FILE="' + GetGameConfigDir(FActiveGameName) + 'vkSumi.conf" '
   else
@@ -10822,6 +11222,7 @@ function Tgoverlayform.GetLosslessScalingLaunchEnv: string;
 var
   EnvStr: string;
 begin
+  if IsPrismContext then Exit('');
   Result := '';
   if not FNavToolEnabled[2] then
     Exit;
@@ -10841,6 +11242,7 @@ var
   i, p: Integer;
   Key, Val, Line, EnvResult: string;
 begin
+  if IsPrismContext then Exit('');
   Result := '';
   if not FNavToolEnabled[3] then Exit;
 
@@ -10884,6 +11286,7 @@ function Tgoverlayform.GetLaunchCommand: string;
 var
   Cmd: string;
 begin
+  if IsPrismContext then begin Result := ''; FLaunchCommand := ''; Exit; end;
   if FActiveGameName <> '' then
   begin
     if FActiveGameIsNonSteam and (Pos(' ', GetGameConfigDir(FActiveGameName)) = 0) then
@@ -10935,6 +11338,7 @@ procedure Tgoverlayform.PreviewBtnClick(Sender: TObject);
 var
   AlreadyRunning: Boolean;
 begin
+  if IsPrismContext then Exit;
   AlreadyRunning := IsProcessRunningPure('pascube') or IsProcessRunningPure('vkcube');
   if AlreadyRunning then
   begin

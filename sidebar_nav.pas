@@ -515,6 +515,7 @@ var
   GameCfgDir, ToolName, ActionStr, Msg: string;
   ConfigFiles: array[0..2] of string;
 begin
+  if FForm.IsPrismContext then begin FForm.ApplyActiveProfileCapabilities; Exit; end;
   Idx        := (Sender as TSpeedButton).Tag;
   NewEnabled := not FForm.FNavToolEnabled[Idx];
   FForm.FNavToolEnabled[Idx] := NewEnabled;
@@ -578,7 +579,7 @@ var
   ShouldShow: Boolean;
   BtnLeft, BtnTop, BtnW: Integer;
 begin
-  ShouldShow := FForm.FNavActive > 0;
+  ShouldShow := (FForm.FNavActive > 0) and not FForm.IsPrismContext;
   for i := 0 to 3 do
     if Assigned(FForm.FNavToolBtns[i]) then
     begin
@@ -612,6 +613,7 @@ var
   i: Integer;
   ToolOn: Boolean;
 begin
+  if FForm.IsPrismContext then begin FForm.ApplyActiveProfileCapabilities; Exit; end;
   if FForm.FActiveGameName = '' then
   begin
     // Global mode: load toggle states from global bgmod.conf
@@ -690,6 +692,7 @@ var
   ConfigPath: string;
   Ini: TIniFile;
 begin
+  if FForm.IsPrismContext then begin FForm.ApplyActiveProfileCapabilities; Exit; end;
   ConfigPath := FForm.GetGameConfigDir(AGameName) + 'bgmod.conf';
   ForceDirectories(ExtractFilePath(ConfigPath));
   Ini := TIniFile.Create(ConfigPath);
@@ -735,6 +738,7 @@ end;
 
 procedure TSidebarNavHelper.ApplyToolEnabledState(AToolIdx: Integer; AEnabled: Boolean);
 begin
+  if FForm.IsPrismContext then begin FForm.ApplyActiveProfileCapabilities; Exit; end;
   case AToolIdx of
     0: // MangoHud spans several tab sheets
     begin
@@ -1544,6 +1548,7 @@ begin
 
   // Repaint sidebar so the thumbnail scales with the nav width
   FForm.goverlayPaintBox.Invalidate;
+  FForm.ApplyActiveProfileCapabilities;
 end;
 
 end.

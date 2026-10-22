@@ -28,6 +28,14 @@ resourcestring
   rsBlacklistDuplicate = 'This program is already on the blacklist.';
   rsBlacklistSelectToRemove = 'Select an item to remove.';
 
+  rsPrismLocalOnly = 'Local MangoHud profile; Prism launch integration unavailable.';
+  rsPrismLocalSaved = 'Profile saved locally; Prism launch integration unavailable.';
+  rsPrismSaveFailed = 'Profile could not be saved. The current instance remains selected.';
+  rsPrismCardSource = 'Prism Launcher';
+  rsPrismLocalProfile = 'Local profile';
+  rsPrismCardUnavailable = 'Launch unavailable';
+  rsPrismSelectedContext = '%s (%s): local profile; Prism launch integration unavailable.';
+  rsPrismDiscoveryIssues = 'Prism discovery skipped unsupported or invalid entries (%d).';
   // Games tab
   rsFolderAlreadyAdded = 'This folder has already been added.';
   rsRemoveFolderTitle = 'Remove non-Steam folder';
