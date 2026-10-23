@@ -4,7 +4,7 @@ COPY entrypoint.sh /usr/local/bin/prism-runtime
 
 # The base is pinned. Arch packages roll; the runtime report records installed versions.
 RUN pacman -Syu --noconfirm --needed prismlauncher mangohud jre21-openjdk \
-      mesa mesa-utils xorg-server-xvfb xorg-xdpyinfo openbox x11vnc \
+      mesa mesa-utils vulkan-swrast xorg-server-xvfb xorg-xdpyinfo openbox x11vnc \
       coreutils procps-ng ttf-dejavu python curl ca-certificates \
     && pacman -Scc --noconfirm \
     && curl -fL -o /tmp/novnc.tar.gz https://github.com/novnc/noVNC/archive/refs/tags/v1.6.0.tar.gz \

@@ -7,6 +7,18 @@ container runtime availability, OpenGL library injection/config transport, and
 Prism first-run startup. It does not prove a visible Minecraft overlay or the
 GOverlay production binding/rollback path.
 
+The runtime also includes `vulkan-swrast` (Lavapipe) for software Vulkan.
+Passing the OpenGL smoke does not prove that Minecraft can create its requested
+GLX visual or use a Vulkan backend. A game reporting no matching GLX visual and
+missing Vulkan surface support needs its actual backend checked separately.
+Record Vulkan/Lavapipe game results separately from the OpenGL smoke; neither
+establishes host-native, Wayland or Flatpak compatibility.
+
+The bundled Java 21 is a runtime baseline. Prism can select or download a managed
+Java runtime required by the selected Minecraft version. Verify the actual game
+executable for both instances; changing the distribution's default Java alone
+does not establish which runtime Prism launches.
+
 Prerequisites on the host: Linux, working rootless Podman (including subordinate
 UID/GID mappings), `podman-compose`, Bash and coreutils. Package installation is
 inside the image only. This harness never runs sudo or requests escalation; an
