@@ -16,6 +16,7 @@ type
     procedure SetUp; override;
     procedure TearDown; override;
   published
+    procedure TestReadOnlyPreviewAndContext;
     procedure TestDistinctLocalProfilesAndReadonlySelection;
     procedure TestPendingEditAndFailurePreserveContext;
     procedure TestDeniedHandlersAndHelpers;
@@ -321,6 +322,54 @@ begin
   AssertTrue('Prism transition succeeds after recovery', goverlayform.SelectPrismInstance(A));
 end;
 
+procedure TPrismGuiTests.TestReadOnlyPreviewAndContext;
+var Before, ProfileBefore, Summary:string;
+begin
+  A.InstallationKey:='prism-root-'+SHA1Print(SHA1String(A.DataRoot));
+  B.InstallationKey:=A.InstallationKey;
+  Put(A.DataRoot+'/prismlauncher.cfg','[General]'+LineEnding+'ConfigVersion=1.3'+LineEnding);
+  AssertTrue('select A',goverlayform.SelectPrismInstance(A));
+  AssertFalse('no stale or initial summary',goverlayform.FPrismPreviewText.Visible);
+  goverlayform.hudtitleEdit.Text:='UNSAVED editor';
+  goverlayform.StartAutoSaveTimer;
+  AssertTrue('timer starts',goverlayform.autoSaveTimer.Enabled);
+  Before:=Snapshot(Base); ProfileBefore:=Snapshot(goverlayform.ActiveProfileConfigDir);
+  goverlayform.PrismReviewChangesClick(nil);
+  Summary:=goverlayform.FPrismPreviewText.Text;
+  AssertTrue('notice',Pos(rsPrismPreviewNotice,Summary)>0);
+  AssertTrue('ready: '+Summary,Pos(rsPrismPreviewReady,Summary)>0);
+  AssertEquals('UNSAVED editor',goverlayform.hudtitleEdit.Text);
+  AssertTrue('summary is read only',goverlayform.FPrismPreviewText.ReadOnly);
+  AssertTrue('review button fits panel',goverlayform.FPrismReviewButton.Left+
+    goverlayform.FPrismReviewButton.Width<=goverlayform.FPrismContextPanel.ClientWidth);
+  AssertFalse('launch binding stays unavailable',pcLaunchBinding in goverlayform.FActiveProfile.Capabilities);
+  AssertTrue('pending timer preserved',goverlayform.autoSaveTimer.Enabled);
+  AssertTrue('dirty state preserved',goverlayform.FProfileDirty);
+  AssertEquals(Before,Snapshot(Base));
+  AssertEquals(ProfileBefore,Snapshot(goverlayform.ActiveProfileConfigDir));
+  goverlayform.autoSaveTimer.Enabled:=False;
+  Put(A.ConfigPath,ReadText(A.ConfigPath)+LineEnding+'OverrideEnv=true'+LineEnding+
+    'Env="{\"MANGOHUD_CONFIGFILE\":\"SECRET_FOREIGN_PATH\"}"'+LineEnding);
+  goverlayform.PrismReviewChangesClick(nil);
+  AssertTrue('conflict: '+goverlayform.FPrismPreviewText.Text,Pos(rsPrismPreviewConflict,goverlayform.FPrismPreviewText.Text)>0);
+  AssertEquals(0,Pos('SECRET_FOREIGN_PATH',goverlayform.FPrismPreviewText.Text));
+  AssertTrue('select B',goverlayform.SelectPrismInstance(B));
+  AssertEquals('',goverlayform.FPrismPreviewText.Text);
+  goverlayform.PrismReviewChangesClick(nil);
+  AssertTrue('B ready',Pos(rsPrismPreviewReady,goverlayform.FPrismPreviewText.Text)>0);
+  Put(B.ConfigPath,'invalid');
+  goverlayform.PrismReviewChangesClick(nil);
+  AssertTrue('unsupported',Pos(rsPrismPreviewUnsupported,goverlayform.FPrismPreviewText.Text)>0);
+  goverlayform.gamesLabelClick(nil);
+  AssertEquals('',goverlayform.FSelectedPrismInstance.StableKey);
+  AssertEquals('',goverlayform.FPrismPreviewText.Text);
+  Before:=Snapshot(Base);
+  goverlayform.PrismReviewChangesClick(nil);
+  AssertEquals('',goverlayform.FPrismPreviewText.Text);
+  AssertEquals(Before,Snapshot(Base));
+  AssertSentinels;
+end;
+
 procedure TPrismGuiTests.TestVisiblePersistentContextAndKeyboardCards;
 var Root: string; I, OldWidth, OldMin, OldGap: Integer; Card: TPrismCardPanel;
   Key: Word; C: TControl; OldCollapsed: Boolean;
@@ -361,6 +410,12 @@ begin
     AssertEquals(ExtractFileDir(Card.Instance.ConfigPath), goverlayform.FPrismContextRoot.Caption);
     AssertEquals(rsPrismLocalOnly, goverlayform.FPrismContextWarning.Caption);
     AssertTrue(goverlayform.FPrismContextWarning.Width >= 500);
+    goverlayform.PrismReviewChangesClick(nil);
+    AssertTrue('narrow review button fits',goverlayform.FPrismReviewButton.Left+
+      goverlayform.FPrismReviewButton.Width<=goverlayform.FPrismContextPanel.ClientWidth);
+    AssertTrue('narrow summary fits',goverlayform.FPrismPreviewText.Left+
+      goverlayform.FPrismPreviewText.Width<=goverlayform.FPrismContextPanel.ClientWidth);
+    AssertTrue('narrow plain text notice',Pos(rsPrismPreviewNotice,goverlayform.FPrismPreviewText.Text)>0);
     AssertTrue(goverlayform.goverlayPageControl.Top >= goverlayform.FPrismContextPanel.Height);
     goverlayform.ShowStatusMessage(rsPrismLocalSaved);
     goverlayform.StatusTimerTick(nil);

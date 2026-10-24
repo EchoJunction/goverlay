@@ -17,7 +17,7 @@ uses
   {$ENDIF}
   qtwidgets, fpreadjpeg, configmanager, IntfGraphics, Grids,
   configkeys, configfile, uihelpers, apputils, overlay_config, overlay_utils,
-  goverlay_strings, toggle_switch, gamecontext, prismprovider,
+  goverlay_strings, toggle_switch, gamecontext, prismprovider, prismpreview, prismsnapshot,
   floating_dock, finish_dialog, floating_overlay, pasplot_form;
 
 
@@ -1225,7 +1225,9 @@ type
     FProfileDirty: Boolean;
     FPrismContextPanel: TPanel;
     FPrismContextTitle, FPrismContextRoot, FPrismContextWarning, FPrismContextMessage: TLabel;
-    FPrismCloneButton: TButton;
+    FPrismCloneButton, FPrismReviewButton: TButton;
+    FPrismPreviewText: TMemo;
+    FSelectedPrismInstance: TPrismInstance;
     FPrismContentTopSpacing: Integer;
     FPrismEnabledStates: array of record
       Control: TControl; WasEnabled: Boolean;
@@ -1590,6 +1592,7 @@ type
     function SelectPrismInstance(const Instance: TPrismInstance): Boolean;
     function CloneGlobalMangoHudToPrism(ReplaceExisting: Boolean; out Error: string): Boolean;
     procedure PrismCloneGlobalClick(Sender: TObject);
+    procedure PrismReviewChangesClick(Sender: TObject);
     function FlushPendingProfileEdits: Boolean;
     procedure ClearActiveProfileContext;
     procedure ApplyActiveProfileCapabilities;
@@ -10911,6 +10914,8 @@ procedure Tgoverlayform.ClearActiveProfileContext;
 begin
   if IsPrismContext and Assigned(statusBar) then statusBar.SimpleText := '';
   FActiveProfile := Default(TActiveProfileContext);
+  FSelectedPrismInstance := Default(TPrismInstance);
+  if Assigned(FPrismPreviewText) then FPrismPreviewText.Clear;
   FProfileDirty := False;
   UpdatePrismContextPanel;
   ApplyActiveProfileCapabilities;
@@ -10991,6 +10996,8 @@ begin
   try
     StopCube;
     FActiveProfile := Context;
+    FSelectedPrismInstance := Instance;
+    if Assigned(FPrismPreviewText) then FPrismPreviewText.Clear;
     FActiveGameName := Context.DisplayName;
     FActiveGameIsNonSteam := False;
     MANGOHUDCFGFILE := Context.ConfigDir + 'MangoHud.conf';
@@ -11004,6 +11011,70 @@ begin
     Result := True;
   finally
     FLoadingConfig := WasLoading;
+  end;
+end;
+
+procedure Tgoverlayform.PrismReviewChangesClick(Sender: TObject);
+var D:TPrismPreviewDTO; Pending:Boolean; F:TPrismPerformanceFlag;
+  Lines:TStringList;
+  function DisplayPath(const P:string):string;
+  var I:SizeInt;
+  begin
+    Result:=P;
+    for I:=1 to Length(Result) do
+      if (Ord(Result[I])<32) or (Ord(Result[I])=127) then Result[I]:='?';
+  end;
+  function BoolText(V:Boolean):string;
+  begin if V then Result:=rsPrismPreviewTrue else Result:=rsPrismPreviewFalse; end;
+  procedure AddBool(const Title:string; const B:TPrismPreviewBool);
+  begin Lines.Add(Format(rsPrismPreviewBool,[Title,BoolText(B.BeforeValue),BoolText(B.ProposedValue)])); end;
+begin
+  if not IsPrismContext or (FSelectedPrismInstance.StableKey='') or
+    (FSelectedPrismInstance.StableKey<>FActiveProfile.StableKey) then Exit;
+  { No event pumping, flush or save: defer the pending timer only for this read,
+    and retain its prior scheduling state and all editor dirty state. }
+  Pending:=Assigned(autoSaveTimer) and autoSaveTimer.Enabled;
+  if Assigned(autoSaveTimer) then autoSaveTimer.Enabled:=False;
+  Lines:=TStringList.Create;
+  try
+    D:=PreviewPrismEnable(FSelectedPrismInstance,TConfigManager.GetHostDataDir);
+    Lines.Add(rsPrismPreviewNotice);
+    case D.Status of
+      ppsConflict: Lines.Add(rsPrismPreviewConflict);
+      ppsUnsupported:
+        begin
+          Lines.Add(rsPrismPreviewUnsupported);
+          case D.Reason of
+            pprLimit:Lines.Add(rsPrismPreviewLimit);
+            pprObservedChange:Lines.Add(rsPrismPreviewChanged);
+            pprInvalidSelection,pprIdentityChanged,pprAmbiguousIdentity:Lines.Add(rsPrismPreviewIdentity);
+            pprReadUnavailable,pprUnsafeRead:Lines.Add(rsPrismPreviewRead);
+            else Lines.Add(rsPrismPreviewSettings);
+          end;
+        end;
+      ppsReady:
+        begin
+          Lines.Add(rsPrismPreviewReady);
+          for F:=Low(F) to High(F) do
+            case F of
+              ppfMangoHud:AddBool(rsPrismPreviewMangoHud,D.Performance[F]);
+              ppfDiscreteGpu:AddBool(rsPrismPreviewMesa,D.Performance[F]);
+              ppfFeralGamemode:AddBool(rsPrismPreviewGameMode,D.Performance[F]);
+              ppfZink:AddBool(rsPrismPreviewZink,D.Performance[F]);
+            end;
+          AddBool(rsPrismPreviewPerformanceGate,D.PerformanceGate);
+          AddBool(rsPrismPreviewEnvGate,D.EnvGate);
+          Lines.Add(Format(rsPrismPreviewFreeze,[BoolText(D.PerformanceFreeze),BoolText(D.EnvFreeze)]));
+          Lines.Add(Format(rsPrismPreviewEnv,[D.CopiedEnvEntryCount,BoolText(D.SelectorAdded)]));
+          Lines.Add(rsPrismPreviewPreserved);
+          Lines.Add(rsPrismPreviewSelector+DisplayPath(D.GeneratedSelector));
+        end;
+    end;
+    FPrismPreviewText.Lines.Assign(Lines);
+    UpdatePrismContextPanel;
+  finally
+    Lines.Free;
+    if Assigned(autoSaveTimer) then autoSaveTimer.Enabled:=Pending;
   end;
 end;
 
@@ -11048,6 +11119,28 @@ begin
     FPrismCloneButton.Hint := rsPrismCloneHelp; FPrismCloneButton.ShowHint := True;
     FPrismCloneButton.SetBounds(12, 102, 250, 28);
     FPrismCloneButton.OnClick := @PrismCloneGlobalClick;
+    FPrismReviewButton := TButton.Create(Self);
+    FPrismReviewButton.Name := 'PrismReviewChangesButton';
+    FPrismReviewButton.Parent := FPrismContextPanel;
+    FPrismReviewButton.Caption := rsPrismReviewChanges;
+    FPrismReviewButton.SetBounds(12, 134, Max(1,FPrismContextPanel.ClientWidth-24), 28);
+    FPrismReviewButton.Anchors := [akLeft,akTop,akRight];
+    FPrismReviewButton.OnClick := @PrismReviewChangesClick;
+    FPrismPreviewText := TMemo.Create(Self);
+    FPrismPreviewText.Name := 'PrismPreviewSummary';
+    FPrismPreviewText.Parent := FPrismContextPanel;
+    FPrismPreviewText.SetBounds(12, 170, Max(1,FPrismContextPanel.ClientWidth-24), 142);
+    FPrismPreviewText.Anchors := [akLeft,akTop,akRight];
+    FPrismPreviewText.Clear;
+    FPrismPreviewText.Color := RGBToColor(24,30,44);
+    FPrismPreviewText.Font.Color := clWhite;
+    FPrismPreviewText.ReadOnly := True;
+    FPrismPreviewText.WordWrap := True;
+    FPrismPreviewText.ScrollBars := ssVertical;
+    FPrismPreviewText.Visible := False;
+    { Qt's inherited scroll-area stylesheet can override the LCL palette. }
+    TQtWidget(FPrismPreviewText.Handle).StyleSheet :=
+      'QTextEdit { background-color: rgb(24,30,44); color: rgb(255,255,255); }';
   end;
   if not FPrismContextPanel.Visible then
     FPrismContentTopSpacing := goverlayPageControl.BorderSpacing.Top;
@@ -11064,6 +11157,11 @@ begin
   FPrismContextWarning.Caption := rsPrismLocalOnly;
   FPrismContextWarning.Hint := rsPrismLocalOnly;
   FPrismContextMessage.Caption := '';
+  FPrismReviewButton.Enabled := FSelectedPrismInstance.StableKey=FActiveProfile.StableKey;
+  FPrismPreviewText.Visible := FPrismPreviewText.Text<>'';
+  if FPrismPreviewText.Visible then FPrismContextPanel.Height:=320
+  else FPrismContextPanel.Height:=168;
+  goverlayPageControl.BorderSpacing.Top := FPrismContextPanel.Height;
 end;
 
 procedure Tgoverlayform.ApplyActiveProfileCapabilities;
