@@ -43,6 +43,13 @@ type
     Issues: TPrismIssues;
   end;
 
+type TPrismMetadataError=(pmeNone,pmeMalformed,pmeVersion,pmeLimit);
+{ Pure bounded metadata subset used by discovery and advisory safe readers.
+  Preserves existing UUID/InstanceDir decoding rules; Values must be an empty
+  case-sensitive string map. No filesystem access or raw diagnostics. }
+function ParsePrismMetadata(const Bytes:RawByteString; Values:TStrings;
+  out Error:TPrismMetadataError):Boolean;
+
 { Explicit inputs only: no environment lookup, application state, or writes.
   Custom roots and an absolute InstanceDir explicitly authorize external paths.
   Symlinks are refused, including in every existing ancestor. This is discovery,
@@ -246,18 +253,19 @@ begin
   Result := True;
 end;
 
-function ReadSettings(const P: string; Values: TStrings;
-  var R: TPrismDiscoveryResult): Boolean;
-var S, L, Section, Key, V: string; Lines: TStringList; I, EqualPos: Integer;
+function ParsePrismMetadata(const Bytes:RawByteString; Values:TStrings;
+  out Error:TPrismMetadataError):Boolean;
+var L, Section, Key, V: string; Lines: TStringList; I, EqualPos: Integer;
   HasGeneral, Relevant, Malformed: Boolean;
 begin
-  Result := False;
-  if not ReadBounded(P, S, R) then Exit;
+  Result:=False; Error:=pmeMalformed;
+  if Length(Bytes)>PrismMaxFileBytes then begin Error:=pmeLimit; Exit; end;
+  if Pos(#0,Bytes)<>0 then Exit;
   Lines := TStringList.Create;
   try
-    Lines.Text := S; Section := ''; HasGeneral := False; Malformed := False;
+    Lines.Text := Bytes; Section := ''; HasGeneral := False; Malformed := False;
     if Lines.Count > 32768 then
-    begin Issue(R, piLimitExceeded, P); Exit; end;
+    begin Error:=pmeLimit; Exit; end;
     for I := 0 to Lines.Count - 1 do
     begin
       L := Trim(Lines[I]);
@@ -284,13 +292,28 @@ begin
       if V = '' then Values.Add(Key + '=');
     end;
     if Malformed or not HasGeneral then
-    begin Issue(R, piMalformedConfig, P); Exit; end;
+    Exit;
     if Values.Values['ConfigVersion'] <> '1.3' then
-    begin Issue(R, piUnsupportedVersion, P); Exit; end;
-    Result := True;
+    begin Error:=pmeVersion; Exit; end;
+    Error:=pmeNone; Result := True;
   finally
     Lines.Free;
   end;
+end;
+
+function ReadSettings(const P:string; Values:TStrings;
+  var R:TPrismDiscoveryResult):Boolean;
+var S:string; E:TPrismMetadataError;
+begin
+  Result:=False;
+  if not ReadBounded(P,S,R) then Exit;
+  Result:=ParsePrismMetadata(S,Values,E);
+  if not Result then
+    case E of
+      pmeLimit:Issue(R,piLimitExceeded,P);
+      pmeVersion:Issue(R,piUnsupportedVersion,P);
+      else Issue(R,piMalformedConfig,P);
+    end;
 end;
 
 function ValidUUID(const S: string): Boolean;
