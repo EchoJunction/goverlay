@@ -89,7 +89,7 @@ begin
   begin
     Entries:=TStringList.Create;
     try
-      if FindFirst(Path+'/*',faAnyFile,Search)=0 then
+      if FindFirst(Path+'/*',faAnyFile or faSymLink,Search)=0 then
       try repeat if (Search.Name<>'.') and (Search.Name<>'..') then Entries.Add(Search.Name); until FindNext(Search)<>0;
       finally FindClose(Search); end;
       Entries.Sort;
@@ -119,7 +119,7 @@ end;
 procedure RemoveTree(const Path:string);
 var Search:TSearchRec; Info:Stat; Item:string;
 begin
-  if FindFirst(Path+'/*',faAnyFile,Search)=0 then
+  if FindFirst(Path+'/*',faAnyFile or faSymLink,Search)=0 then
   try
     repeat
       if (Search.Name='.') or (Search.Name='..') then Continue;
