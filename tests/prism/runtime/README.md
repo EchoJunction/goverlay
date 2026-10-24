@@ -133,3 +133,53 @@ storage can consume several gigabytes and is subject to host `/tmp` cleanup.
 Container results are a separate compatibility row. Native-host, Wayland,
 Flatpak and real Minecraft normal-Play checks remain untested until performed
 in those environments; Xvfb/software GL cannot establish them.
+
+## Synthetic development GUI
+
+The separate `dev-compose.yaml`/`dev.sh` profile starts current-source GOverlay
+with account-free synthetic native/Flatpak/custom Prism A/B fixtures. Its HOME,
+build volumes and project are independent of the research `desktop-home` volume.
+It uses a private state directory beside the source checkout by default; retain
+its printed `DEV_STATE` and allow at least 15 GiB free for VFS image/container
+copies. Override `DEV_STATE_PARENT` explicitly to choose a different parent.
+
+```sh
+# Prints DEV_STATE. If tools image is absent, follow the dev-image instruction:
+make dev-build
+make dev-image DEV_STATE=<printed-private-state>
+make dev-build DEV_STATE=<same-state>
+make dev-test DEV_STATE=<same-state>
+make dev-run DEV_STATE=<same-state>
+DEV_STATE=<same-state> ./tests/prism/runtime/dev.sh password
+```
+
+Open `http://127.0.0.1:6081/vnc.html` and use the private VNC password. `DEV_PORT`
+selects another local port. No Prism first-run wizard or account is involved.
+Image bootstrap needs network; application builds/tests are offline. Build
+snapshots readonly source into container storage, records source/binary/harness
+hashes and rejects stale runs. Stop the desktop before rebuilding/testing.
+`dev-test` includes the existing focused production suites plus six local saves
+and fresh-process reloads in persistent synthetic HOME. This is separate from
+actual binary/window and browser-boundary checks:
+
+```sh
+DEV_STATE=<same-state> ./tests/prism/runtime/dev.sh check
+DEV_STATE=<same-state> ./tests/prism/runtime/dev.sh report
+make dev-stop DEV_STATE=<same-state>
+make dev-clean DEV_STATE=<same-state>
+```
+
+All dev containers use network none. A bounded host relay binds only 127.0.0.1
+and forwards browser bytes through Podman exec stdio to fixed container
+localhost:6080, without an engine socket mount. It checks process owner, start
+time and exact argv with pidfd before stopping; active exec clients are reaped
+before container cleanup. Host Python3 with Linux pidfd support, flock and
+setsid are required. No payload/password is logged. Eight clients and 120-second
+idle limits apply; reconnect after an idle disconnect.
+
+Reports stay in `DEV_STATE/dev-reports`. Stop keeps synthetic edits; clean removes
+only exact dev project containers/label-checked volumes/network, retaining image
+cache and reports. It never calls generic Compose down or deletes research
+account volumes. Do not import real accounts/data; readonly source exposes its
+contents to the container. Native Wayland, installed-host GUI behavior and
+Minecraft integration are not established by this container desktop.

@@ -1,0 +1,53 @@
+x-dev: &dev
+  image: localhost/goverlay-prism-editor:test
+  user: "1000:1000"
+  cap_drop: [ALL]
+  security_opt: [no-new-privileges:true]
+  entrypoint: [/dev-tools/dev-entrypoint.sh]
+  working_dir: /build
+  shm_size: 256m
+  environment:
+    HOME: /home/tester
+    USER: tester
+    LOGNAME: tester
+    DISPLAY: :99
+    LIBGL_ALWAYS_SOFTWARE: "1"
+    QT_X11_NO_MITSHM: "1"
+    HOST_XDG_CONFIG_HOME: ""
+    HOST_XDG_DATA_HOME: ""
+    HTTP_PROXY: ""
+    HTTPS_PROXY: ""
+    ALL_PROXY: ""
+    NO_PROXY: ""
+    http_proxy: ""
+    https_proxy: ""
+    all_proxy: ""
+    no_proxy: ""
+  volumes:
+    - ../../..:/source:ro
+    - .:/dev-tools:ro
+    - dev-home:/home/tester
+    - dev-build:/build
+
+services:
+  dev-build:
+    <<: *dev
+    profiles: [dev]
+    network_mode: none
+    command: [build]
+  dev-test:
+    <<: *dev
+    profiles: [dev]
+    network_mode: none
+    command: [test]
+  dev-desktop:
+    <<: *dev
+    profiles: [dev]
+    command: [desktop]
+    network_mode: none
+
+volumes:
+  dev-home:
+    name: ${DEV_PROJECT:?Use dev.sh}_home
+  dev-build:
+    name: ${DEV_PROJECT:?Use dev.sh}_build
