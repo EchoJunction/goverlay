@@ -1,6 +1,6 @@
 program prism_tests;
 {$mode objfpc}{$H+}
-uses fpcunit, testregistry, plaintestreport, prism_test_cases, prism_settings_test_cases, prism_document_test_cases, prism_env_test_cases, prism_primitives_test_cases, prism_snapshot_test_cases, prism_plan_test_cases;
+uses fpcunit, testregistry, plaintestreport, prism_test_cases, prism_settings_test_cases, prism_document_test_cases, prism_env_test_cases, prism_primitives_test_cases, prism_snapshot_test_cases, prism_plan_test_cases, prism_removal_test_cases;
 var Results: TTestResult; Writer: TPlainResultsWriter; Failed: Boolean;
 begin
   Results := TTestResult.Create;
