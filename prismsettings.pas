@@ -11,6 +11,8 @@ const
 type
   TPrismScalarError = (pseNone, pseLimitExceeded, pseMalformed,
     pseUnsupportedEncoding);
+  TPrismBoolError = (pbeNone, pbeLimitExceeded, pbeMalformedScalar,
+    pbeUnsupportedEncoding, pbeUnsupportedValue);
 
 { Pure, deliberately strict Qt IniFormat QString subset. Input is one isolated
   scalar, without INI whitespace, comments or line continuations. Supports a
@@ -20,6 +22,13 @@ type
   failure. Neither input nor application/filesystem state is modified. }
 function DecodePrismScalar(const Scalar: RawByteString; out Value: UTF8String;
   out Error: TPrismScalarError): Boolean;
+
+{ Absence/defaults belong to the caller. Only decoded canonical true/false are
+  supported; present empty/numeric/case aliases are unsupported. Failure clears
+  Value. Encoding always returns the canonical unquoted scalar. }
+function DecodePrismBool(const Scalar: RawByteString; out Value: Boolean;
+  out Error: TPrismBoolError): Boolean;
+function EncodePrismBool(Value: Boolean): RawByteString;
 
 implementation
 
@@ -174,6 +183,29 @@ begin
   end;
   Value := UTF8String(Buffer);
   Error := pseNone; Result := True;
+end;
+
+function DecodePrismBool(const Scalar: RawByteString; out Value: Boolean;
+  out Error: TPrismBoolError): Boolean;
+var Text: UTF8String; ScalarError: TPrismScalarError;
+begin
+  Result := False; Value := False; Error := pbeUnsupportedValue;
+  if not DecodePrismScalar(Scalar, Text, ScalarError) then
+  begin
+    case ScalarError of
+      pseLimitExceeded: Error := pbeLimitExceeded;
+      pseUnsupportedEncoding: Error := pbeUnsupportedEncoding;
+      else Error := pbeMalformedScalar;
+    end;
+    Exit;
+  end;
+  if (Text <> 'true') and (Text <> 'false') then Exit;
+  Value := Text = 'true'; Error := pbeNone; Result := True;
+end;
+
+function EncodePrismBool(Value: Boolean): RawByteString;
+begin
+  if Value then Result := 'true' else Result := 'false';
 end;
 
 end.
