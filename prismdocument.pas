@@ -31,8 +31,18 @@ type
   end;
   TPrismDocument = record
     Bytes: RawByteString;
+    { Insert immediately before the next section header, or at EOF (Length+1).
+      New lines use the General header's LF/CRLF. Existing bytes stay opaque. }
+    GeneralInsertOffset: SizeInt;
+    GeneralLineEnding: RawByteString;
     Managed: array[TPrismManagedKey] of TPrismIndexedValue;
   end;
+
+  TPrismManagedEdit = record
+    KeyName, RawScalar: RawByteString;
+  end;
+  TPrismDocumentEditError = (pdeeNone, pdeeInvalidDocument, pdeeUnsupportedKey,
+    pdeeDuplicateEdit, pdeeInvalidScalar, pdeeLimitExceeded, pdeeInvalidResult);
 
 const
   PrismManagedKeyNames: array[TPrismManagedKey] of ShortString = (
@@ -52,6 +62,15 @@ const
   Errors are fixed enums; failure clears the entire output. No filesystem use. }
 function IndexPrismDocument(const Bytes: RawByteString;
   out Document: TPrismDocument; out Error: TPrismDocumentError): Boolean;
+
+{ Revalidates Bytes/index before trusting spans. Replaces only value spans and
+  inserts absent managed keys at the explicit General anchor in edit order.
+  Preserves every untouched byte and original final-newline presence. Duplicate
+  or unknown names fail closed. Reindexes the complete proposal; no writes,
+  partial output, semantic defaults or override behavior. }
+function EditPrismDocument(const Document: TPrismDocument;
+  const Edits: array of TPrismManagedEdit; out Proposed: TPrismDocument;
+  out Error: TPrismDocumentEditError): Boolean;
 
 implementation
 
@@ -137,6 +156,7 @@ begin
   begin Error := pdeUnsupportedEncoding; Exit; end;
   SeenSection := False; SeenGeneral := False; InGeneral := False;
   Position := 1; LineCount := 0;
+  Candidate.GeneralInsertOffset := Length(Bytes) + 1;
   while Position <= Length(Bytes) do
   begin
     Inc(LineCount);
@@ -168,11 +188,13 @@ begin
       begin Error := pdeUnsupportedEncoding; Exit; end;
       if (CompareText(string(Name), 'General') = 0) and (Name <> 'General') then
       begin Error := pdeUnsupportedEncoding; Exit; end;
+      if InGeneral then Candidate.GeneralInsertOffset := Start;
       SeenSection := True; InGeneral := Name = 'General';
       if InGeneral then
       begin
         if SeenGeneral then begin Error := pdeDuplicate; Exit; end;
         SeenGeneral := True;
+        Candidate.GeneralLineEnding := Copy(Bytes, Finish + 1, NextLine - Finish - 1);
       end;
       Continue;
     end;
@@ -216,6 +238,137 @@ begin
   begin Error := pdeUnsupportedVersion; Exit; end;
   Candidate.Bytes := Bytes; Document := Candidate;
   Error := pdeNone; Result := True;
+end;
+
+function SameIndex(const A, B: TPrismDocument): Boolean;
+var K: TPrismManagedKey;
+begin
+  Result := False;
+  if (A.GeneralInsertOffset <> B.GeneralInsertOffset) or
+    (A.GeneralLineEnding <> B.GeneralLineEnding) then Exit;
+  for K := Low(K) to High(K) do
+    if (A.Managed[K].Present <> B.Managed[K].Present) or
+      (A.Managed[K].LineSpan.Offset <> B.Managed[K].LineSpan.Offset) or
+      (A.Managed[K].LineSpan.Length <> B.Managed[K].LineSpan.Length) or
+      (A.Managed[K].ValueSpan.Offset <> B.Managed[K].ValueSpan.Offset) or
+      (A.Managed[K].ValueSpan.Length <> B.Managed[K].ValueSpan.Length) or
+      (A.Managed[K].RawScalar <> B.Managed[K].RawScalar) or
+      (A.Managed[K].DecodedScalar <> B.Managed[K].DecodedScalar) then Exit;
+  Result := True;
+end;
+
+function EditPrismDocument(const Document: TPrismDocument;
+  const Edits: array of TPrismManagedEdit; out Proposed: TPrismDocument;
+  out Error: TPrismDocumentEditError): Boolean;
+type
+  TReplacement = record
+    Key: TPrismManagedKey;
+    Scalar: RawByteString;
+  end;
+var
+  Checked, Candidate: TPrismDocument;
+  IndexError: TPrismDocumentError; ScalarError: TPrismScalarError;
+  Seen: array[TPrismManagedKey] of Boolean;
+  Keys: array[0..Ord(High(TPrismManagedKey))] of TPrismManagedKey;
+  Replacements: array[0..Ord(High(TPrismManagedKey))] of TReplacement;
+  Swap: TReplacement;
+  K, FoundKey: TPrismManagedKey;
+  I, J, Count, Missing, LeftMissing, Total, Cursor, Used: SizeInt;
+  Found, AtEOF, FinalNewline: Boolean;
+  Decoded: UTF8String;
+  Insertions, Bytes, EOL: RawByteString;
+  Span: TPrismByteSpan;
+
+  procedure Append(const S: RawByteString; Offset, N: SizeInt);
+  begin
+    if N > 0 then Move(S[Offset], Bytes[Used + 1], N);
+    Inc(Used, N);
+  end;
+
+begin
+  Result := False; Proposed := Default(TPrismDocument); Error := pdeeInvalidDocument;
+  if not IndexPrismDocument(Document.Bytes, Checked, IndexError) then
+  begin
+    if IndexError = pdeLimitExceeded then Error := pdeeLimitExceeded;
+    Exit;
+  end;
+  if not SameIndex(Document, Checked) then Exit;
+  if Length(Edits) > Ord(High(TPrismManagedKey)) + 1 then
+  begin Error := pdeeLimitExceeded; Exit; end;
+  FillChar(Seen, SizeOf(Seen), 0); Count := 0; Missing := 0;
+  Total := Length(Checked.Bytes); EOL := Checked.GeneralLineEnding;
+  for I := 0 to High(Edits) do
+  begin
+    Found := False; FoundKey := pmkConfigVersion;
+    for K := Low(K) to High(K) do
+      if Edits[I].KeyName = PrismManagedKeyNames[K] then
+      begin FoundKey := K; Found := True; Break; end;
+    if not Found then begin Error := pdeeUnsupportedKey; Exit; end;
+    if Seen[FoundKey] then begin Error := pdeeDuplicateEdit; Exit; end;
+    Seen[FoundKey] := True; Keys[I] := FoundKey;
+    if not DecodePrismScalar(Edits[I].RawScalar, Decoded, ScalarError) then
+    begin
+      if ScalarError = pseLimitExceeded then Error := pdeeLimitExceeded
+      else Error := pdeeInvalidScalar;
+      Exit;
+    end;
+    Inc(Total, Length(Edits[I].RawScalar));
+    if Checked.Managed[FoundKey].Present then
+    begin
+      Dec(Total, Checked.Managed[FoundKey].ValueSpan.Length);
+      Replacements[Count].Key := FoundKey;
+      Replacements[Count].Scalar := Edits[I].RawScalar; Inc(Count);
+    end
+    else
+    begin
+      Inc(Missing); Inc(Total, Length(PrismManagedKeyNames[FoundKey]) + 1);
+    end;
+  end;
+  AtEOF := Checked.GeneralInsertOffset = Length(Checked.Bytes) + 1;
+  FinalNewline := (Length(Checked.Bytes) > 0) and
+    (Checked.Bytes[Length(Checked.Bytes)] = #10);
+  if Missing > 0 then
+  begin
+    Inc(Total, Missing * Length(EOL));
+    { At an unterminated EOF, the first separator takes the place of the
+      omitted final terminator, so Missing EOLs are needed in every case. }
+  end;
+  if Total > PrismDocumentMaxBytes then begin Error := pdeeLimitExceeded; Exit; end;
+  Insertions := ''; LeftMissing := Missing;
+  if (Missing > 0) and AtEOF and not FinalNewline then Insertions := EOL;
+  for I := 0 to High(Edits) do
+    if not Checked.Managed[Keys[I]].Present then
+    begin
+      Dec(LeftMissing);
+      Insertions := Insertions + RawByteString(PrismManagedKeyNames[Keys[I]]) +
+        '=' + Edits[I].RawScalar;
+      if not AtEOF or FinalNewline or (LeftMissing > 0) then
+        Insertions := Insertions + EOL;
+    end;
+  for I := 0 to Count - 2 do
+    for J := I + 1 to Count - 1 do
+      if Checked.Managed[Replacements[J].Key].ValueSpan.Offset <
+        Checked.Managed[Replacements[I].Key].ValueSpan.Offset then
+      begin Swap := Replacements[I]; Replacements[I] := Replacements[J]; Replacements[J] := Swap; end;
+  SetLength(Bytes, Total); Used := 0; Cursor := 1;
+  for I := 0 to Count - 1 do
+  begin
+    Span := Checked.Managed[Replacements[I].Key].ValueSpan;
+    Append(Checked.Bytes, Cursor, Span.Offset - Cursor);
+    Append(Replacements[I].Scalar, 1, Length(Replacements[I].Scalar));
+    Cursor := Span.Offset + Span.Length;
+  end;
+  Append(Checked.Bytes, Cursor, Checked.GeneralInsertOffset - Cursor);
+  Append(Insertions, 1, Length(Insertions));
+  Append(Checked.Bytes, Checked.GeneralInsertOffset,
+    Length(Checked.Bytes) + 1 - Checked.GeneralInsertOffset);
+  if not IndexPrismDocument(Bytes, Candidate, IndexError) then
+  begin
+    if IndexError = pdeLimitExceeded then Error := pdeeLimitExceeded
+    else Error := pdeeInvalidResult;
+    Exit;
+  end;
+  Proposed := Candidate; Error := pdeeNone; Result := True;
 end;
 
 end.

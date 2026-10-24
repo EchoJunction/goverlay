@@ -47,6 +47,8 @@ begin
   AssertFalse('Document refused', IndexPrismDocument(Bytes, D, E));
   AssertEquals('Fixed reason', Ord(Expected), Ord(E));
   AssertEquals('No partial original bytes', '', string(D.Bytes));
+  AssertEquals('No partial insertion anchor', 0, D.GeneralInsertOffset);
+  AssertEquals('No partial insertion EOL', '', string(D.GeneralLineEnding));
   for K := Low(K) to High(K) do
   begin
     AssertFalse('No partial presence', D.Managed[K].Present);
