@@ -72,6 +72,15 @@ function EditPrismDocument(const Document: TPrismDocument;
   const Edits: array of TPrismManagedEdit; out Proposed: TPrismDocument;
   out Error: TPrismDocumentEditError): Boolean;
 
+{ Deletes complete physical managed LineSpans after fresh indexing and supplied
+  index validation. Unknown/repeated names and ConfigVersion removal refuse;
+  an absent named key is idempotent. Every surviving byte is retained, including
+  EOF separators: this helper never infers newline ownership or normalizes EOF.
+  No ownership/disable semantics, I/O or partial output. }
+function RemovePrismManagedLines(const Document: TPrismDocument;
+  const KeyNames: array of RawByteString; out Proposed: TPrismDocument;
+  out Error: TPrismDocumentEditError): Boolean;
+
 implementation
 
 uses SysUtils, prismsettings;
@@ -369,6 +378,67 @@ begin
     Exit;
   end;
   Proposed := Candidate; Error := pdeeNone; Result := True;
+end;
+
+function RemovePrismManagedLines(const Document: TPrismDocument;
+  const KeyNames: array of RawByteString; out Proposed: TPrismDocument;
+  out Error: TPrismDocumentEditError): Boolean;
+var Checked, Candidate: TPrismDocument; IndexError: TPrismDocumentError;
+  Seen: array[TPrismManagedKey] of Boolean;
+  Spans: array[0..Ord(High(TPrismManagedKey))] of TPrismByteSpan;
+  Swap: TPrismByteSpan; K, FoundKey: TPrismManagedKey;
+  I, J, Count, Total, Cursor, Used, N: SizeInt; Found: Boolean;
+  Bytes: RawByteString;
+  procedure Append(Offset, Len: SizeInt);
+  begin
+    if Len>0 then Move(Checked.Bytes[Offset],Bytes[Used+1],Len);
+    Inc(Used,Len);
+  end;
+begin
+  Result := False; Proposed := Default(TPrismDocument); Error := pdeeInvalidDocument;
+  if not IndexPrismDocument(Document.Bytes,Checked,IndexError) then
+  begin
+    if IndexError=pdeLimitExceeded then Error:=pdeeLimitExceeded;
+    Exit;
+  end;
+  if not SameIndex(Document,Checked) then Exit;
+  if Length(KeyNames)>Ord(High(TPrismManagedKey))+1 then
+  begin Error:=pdeeLimitExceeded; Exit; end;
+  FillChar(Seen,SizeOf(Seen),0); Count:=0; Total:=Length(Checked.Bytes);
+  for I:=0 to High(KeyNames) do
+  begin
+    Found:=False; FoundKey:=pmkConfigVersion;
+    for K:=Low(K) to High(K) do
+      if KeyNames[I]=PrismManagedKeyNames[K] then
+      begin Found:=True; FoundKey:=K; Break; end;
+    if not Found or (FoundKey=pmkConfigVersion) then
+    begin Error:=pdeeUnsupportedKey; Exit; end;
+    if Seen[FoundKey] then begin Error:=pdeeDuplicateEdit; Exit; end;
+    Seen[FoundKey]:=True;
+    if Checked.Managed[FoundKey].Present then
+    begin
+      Spans[Count]:=Checked.Managed[FoundKey].LineSpan;
+      Dec(Total,Spans[Count].Length); Inc(Count);
+    end;
+  end;
+  for I:=0 to Count-2 do
+    for J:=I+1 to Count-1 do
+      if Spans[J].Offset<Spans[I].Offset then
+      begin Swap:=Spans[I]; Spans[I]:=Spans[J]; Spans[J]:=Swap; end;
+  SetLength(Bytes,Total); Used:=0; Cursor:=1;
+  for I:=0 to Count-1 do
+  begin
+    N:=Spans[I].Offset-Cursor; Append(Cursor,N);
+    Cursor:=Spans[I].Offset+Spans[I].Length;
+  end;
+  Append(Cursor,Length(Checked.Bytes)+1-Cursor);
+  if not IndexPrismDocument(Bytes,Candidate,IndexError) then
+  begin
+    if IndexError=pdeLimitExceeded then Error:=pdeeLimitExceeded
+    else Error:=pdeeInvalidResult;
+    Exit;
+  end;
+  Proposed:=Candidate; Error:=pdeeNone; Result:=True;
 end;
 
 end.
