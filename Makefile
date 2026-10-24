@@ -124,3 +124,9 @@ tarball: goverlay start_goverlay.sh
 	tar -cJf goverlay_${VERSION}.tar.xz goverlay start_goverlay.sh
 
 .PHONY: all data/goverlay.sh start_goverlay.sh clean install uninstall tests test test-prism test-logic test-gui tarball
+
+# Rootless synthetic GUI workflow; DEV_STATE selects its private engine cache.
+dev-image dev-build dev-run dev-test dev-stop dev-clean:
+	./tests/prism/runtime/dev.sh $(patsubst dev-%,%,$@)
+
+.PHONY: dev-image dev-build dev-run dev-test dev-stop dev-clean
