@@ -109,7 +109,7 @@ test: test-prism test-logic test-gui
 
 test-prism:
 	mkdir -p tests/prism/lib
-	fpc -Fu. -FUtests/prism/lib -FEtests/prism tests/prism/prism_tests.lpr
+	fpc -dPRISM_PREVIEW_TESTS -Fu. -FUtests/prism/lib -FEtests/prism tests/prism/prism_tests.lpr
 	./tests/prism/prism_tests
 
 test-logic: bgmod bgmod-uninstaller bgmod-splash
