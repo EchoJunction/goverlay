@@ -28,6 +28,8 @@ resourcestring
   rsBlacklistDuplicate = 'This program is already on the blacklist.';
   rsBlacklistSelectToRemove = 'Select an item to remove.';
 
+  rsPrismLibrary = 'Prism Launcher';
+  rsPrismLibraryHint = 'Games → Prism Launcher';
   rsPrismLocalOnly = 'Local MangoHud profile; Prism launch integration unavailable.';
   rsPrismLocalSaved = 'Profile saved locally; Prism launch integration unavailable.';
   rsPrismSaveFailed = 'Profile could not be saved. The current instance remains selected.';

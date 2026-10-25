@@ -71,7 +71,7 @@ type
 implementation
 
 uses
-  apputils, themeunit, configmanager, bgmod_resources, StrUtils, overlay_config, FileUtil, optiscaler_update, systemdetector;
+  goverlay_strings, apputils, themeunit, configmanager, bgmod_resources, StrUtils, overlay_config, FileUtil, optiscaler_update, systemdetector;
 
 constructor TSidebarNavHelper.Create(AForm: Tgoverlayform);
 begin
@@ -119,6 +119,15 @@ begin
     FForm.goverlayimage.AntialiasingMode := amOn;
     try FForm.goverlayimage.Picture.LoadFromFile(LogoPath); except end;
   end;
+
+  FForm.FPrismGamesButton:=TButton.Create(FForm);
+  FForm.FPrismGamesButton.Name:='PrismGamesChild';
+  FForm.FPrismGamesButton.Parent:=FForm;
+  FForm.FPrismGamesButton.Caption:='↳ '+rsPrismLibrary;
+  FForm.FPrismGamesButton.Hint:=rsPrismLibraryHint;
+  FForm.FPrismGamesButton.ShowHint:=True;
+  FForm.FPrismGamesButton.TabStop:=True;
+  FForm.FPrismGamesButton.OnClick:=@FForm.PrismGamesClick;
 
   SetLength(FForm.FNavItems,      Length(ITEMS));
   SetLength(FForm.FNavIndicators, Length(ITEMS));
@@ -196,6 +205,7 @@ begin
   for i := 0 to High(ITEMS) do
   begin
     TopY := TOP_START + i * (NAV_ITEM_H + 4);
+    if i>0 then Inc(TopY,32);
 
     // --- Item panel ---
     Item := TPanel.Create(FForm);
@@ -1514,6 +1524,19 @@ begin
     FForm.FNavLabels[i].Left    := 54;
     FForm.FNavLabels[i].Width   := 104;
     FForm.FNavLabels[i].Visible := ShowLabels;
+  end;
+
+  if Assigned(FForm.FPrismGamesButton) then
+  begin
+    FForm.FPrismGamesButton.SetBounds(IfThen(ShowLabels,32,8),
+      FForm.FNavItems[0].Top+FForm.FNavItems[0].Height+2,
+      Max(1,AWidth-IfThen(ShowLabels,40,16)),28);
+    if ShowLabels then
+    begin FForm.FPrismGamesButton.Caption:='↳ '+rsPrismLibrary; FForm.FPrismGamesButton.Font.Size:=9; end
+    else begin FForm.FPrismGamesButton.Caption:='↳ PL'; FForm.FPrismGamesButton.Font.Size:=7; end;
+    if FForm.FGamesPrismOnly and (FForm.FNavActive=0) then
+      FForm.FPrismGamesButton.Font.Style:=[fsBold]
+    else FForm.FPrismGamesButton.Font.Style:=[];
   end;
 
   // Show/hide the Games↔Tools separator section
