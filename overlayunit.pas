@@ -17,7 +17,7 @@ uses
   {$ENDIF}
   qtwidgets, fpreadjpeg, configmanager, IntfGraphics, Grids,
   configkeys, configfile, uihelpers, apputils, overlay_config, overlay_utils,
-  goverlay_strings, toggle_switch, gamecontext, prismprovider, prismpreview, prismsnapshot,
+  goverlay_strings, toggle_switch, gamecontext, prismprovider, prismpreview, prismsnapshot, prismperformance, prismperformancepreview,
   floating_dock, finish_dialog, floating_overlay, pasplot_form;
 
 
@@ -1230,6 +1230,16 @@ type
     FPrismCloneButton, FPrismReviewButton: TButton;
     FPrismPreviewText, FPrismTweaksText: TMemo;
     FPrismTweaksPage: TTabSheet;
+    FPrismDraftPanel: TPanel;
+    FPrismDraftGroup: TComboBox;
+    FPrismDraftFields: array[TPrismEditablePerformanceFlag] of TComboBox;
+    FPrismDraftCurrent: array[TPrismEditablePerformanceFlag] of TLabel;
+    FPrismDraftGate, FPrismDraftStatus, FPrismDraftNotice: TLabel;
+    FPrismDraftReload, FPrismDraftReset: TButton;
+    FPrismPerformanceBaseline: TPrismPerformanceBaseline;
+    FPrismPerformanceDTO: TPrismPerformanceDTO;
+    FPrismPerformanceDraft: TPrismPerformanceDraft;
+    FPrismPerformanceDirty, FPrismDraftUpdating: Boolean;
     { Advisory DTO only: no raw snapshot/proposal or future Apply authority. }
     FPrismPreviewDTO: TPrismPreviewDTO;
     FPrismHasPreview, FPrismDeferredAutoSave: Boolean;
@@ -1605,6 +1615,13 @@ type
     procedure EnterGames(PrismOnly: Boolean);
     procedure RenderPrismPreview;
     procedure ShowPrismTweaks;
+    procedure ClearPrismPerformanceDraft;
+    procedure PrismPerformanceReloadClick(Sender:TObject);
+    procedure PrismPerformanceResetClick(Sender:TObject);
+    procedure PrismPerformanceChange(Sender:TObject);
+    procedure RenderPrismPerformanceDraft;
+    procedure CreatePrismPerformanceControls;
+    procedure PrismPerformancePanelResize(Sender:TObject);
     function FlushPendingProfileEdits: Boolean;
     procedure ClearActiveProfileContext;
     procedure ApplyActiveProfileCapabilities;
@@ -3382,6 +3399,10 @@ begin
     ShowStatusMessage(rsPrismTweaksPending);
     CloseAction:=caNone;
     Exit;
+  end;
+  if IsPrismContext and FPrismPerformanceDirty then
+  begin
+    ShowStatusMessage(rsPrismDraftPending); CloseAction:=caNone; Exit;
   end;
   SaveWindowGeometry;
   FClosing := True;
@@ -10953,6 +10974,8 @@ end;
 function Tgoverlayform.FlushPendingProfileEdits: Boolean;
 begin
   Result := True;
+  if IsPrismContext and FPrismPerformanceDirty then
+  begin ShowStatusMessage(rsPrismDraftPending); Exit(False); end;
   if IsPrismContext and Assigned(FPrismTweaksPage) and
     (goverlayPageControl.ActivePage=FPrismTweaksPage) and
     (FProfileDirty or FPrismDeferredAutoSave) then
@@ -10977,6 +11000,7 @@ begin
   if IsPrismContext and Assigned(statusBar) then statusBar.SimpleText := '';
   FActiveProfile := Default(TActiveProfileContext);
   FSelectedPrismInstance := Default(TPrismInstance);
+  ClearPrismPerformanceDraft;
   FPrismPreviewDTO:=Default(TPrismPreviewDTO); FPrismHasPreview:=False;
   FPrismDeferredAutoSave:=False;
   if Assigned(FPrismTweaksPage) then FPrismTweaksPage.TabVisible:=False;
@@ -11067,6 +11091,7 @@ begin
     StopCube;
     FActiveProfile := Context;
     FSelectedPrismInstance := Instance;
+    ClearPrismPerformanceDraft;
     FPrismPreviewDTO:=Default(TPrismPreviewDTO); FPrismHasPreview:=False;
     FPrismDeferredAutoSave:=False;
     if Assigned(FPrismTweaksPage) then FPrismTweaksPage.TabVisible:=False;
@@ -11129,7 +11154,9 @@ begin
   try
     for View:=0 to 1 do
     begin
-      Tweaks:=View=1; Lines.Clear; Lines.Add(rsPrismPreviewNotice);
+      Tweaks:=View=1; Lines.Clear;
+      if Tweaks then Lines.Add(rsPrismBindingSummary);
+      Lines.Add(rsPrismPreviewNotice);
       case D.Status of
         ppsConflict: Lines.Add(rsPrismPreviewConflict);
         ppsUnsupported:
@@ -11170,6 +11197,180 @@ begin
       else FPrismPreviewText.Lines.Assign(Lines);
     end;
   finally Lines.Free; end;
+end;
+
+procedure Tgoverlayform.ClearPrismPerformanceDraft;
+begin
+  FPrismPerformanceBaseline:=Default(TPrismPerformanceBaseline);
+  FPrismPerformanceDraft:=Default(TPrismPerformanceDraft);
+  FPrismPerformanceDTO:=Default(TPrismPerformanceDTO);
+  FPrismPerformanceDirty:=False;
+  RenderPrismPerformanceDraft;
+end;
+
+procedure Tgoverlayform.PrismPerformanceReloadClick(Sender:TObject);
+var Fresh:TPrismPerformanceBaseline; D:TPrismPerformanceDTO;
+begin
+  if not IsPrismContext or (FSelectedPrismInstance.StableKey<>FActiveProfile.StableKey) then Exit;
+  D:=LoadPrismPerformanceBaseline(FSelectedPrismInstance,TConfigManager.GetHostDataDir,Fresh);
+  if Fresh.Initialized then
+  begin
+    FPrismPerformanceBaseline:=Fresh;
+    FPrismPerformanceDraft:=Default(TPrismPerformanceDraft);
+    FPrismPerformanceDirty:=False;
+  end;
+  { Failed explicit reload retains existing baseline and user's intent. }
+  D.Requested:=FPrismPerformanceDraft; FPrismPerformanceDTO:=D;
+  RenderPrismPerformanceDraft;
+end;
+
+procedure Tgoverlayform.PrismPerformanceResetClick(Sender:TObject);
+begin
+  if not IsPrismContext then Exit;
+  FPrismPerformanceDraft:=Default(TPrismPerformanceDraft);
+  FPrismPerformanceDirty:=False;
+  if FPrismPerformanceBaseline.Initialized then
+    FPrismPerformanceDTO:=PreviewPrismPerformance(FSelectedPrismInstance,
+      TConfigManager.GetHostDataDir,FPrismPerformanceBaseline,FPrismPerformanceDraft);
+  RenderPrismPerformanceDraft;
+end;
+
+procedure Tgoverlayform.PrismPerformanceChange(Sender:TObject);
+var Field:TPrismEditablePerformanceFlag;
+begin
+  if FPrismDraftUpdating or not IsPrismContext or not FPrismPerformanceBaseline.Initialized then Exit;
+  if (FPrismDraftGroup.ItemIndex<0) or (FPrismDraftGroup.ItemIndex>2) then Exit;
+  FPrismPerformanceDraft.Group:=TPrismPerformanceGroupIntent(FPrismDraftGroup.ItemIndex);
+  FPrismPerformanceDirty:=FPrismPerformanceDraft.Group<>ppgKeep;
+  for Field:=Low(Field) to High(Field) do
+  begin
+    if (FPrismDraftFields[Field].ItemIndex<0) or (FPrismDraftFields[Field].ItemIndex>3) then Exit;
+    FPrismPerformanceDraft.Fields[Field]:=TPrismPerformanceFieldIntent(FPrismDraftFields[Field].ItemIndex);
+    FPrismPerformanceDirty:=FPrismPerformanceDirty or
+      (FPrismPerformanceDraft.Fields[Field]<>ppiKeep);
+  end;
+  FPrismPerformanceDTO:=PreviewPrismPerformance(FSelectedPrismInstance,
+    TConfigManager.GetHostDataDir,FPrismPerformanceBaseline,FPrismPerformanceDraft);
+  RenderPrismPerformanceDraft;
+end;
+
+procedure Tgoverlayform.RenderPrismPerformanceDraft;
+const Flags:array[TPrismEditablePerformanceFlag] of TPrismPerformanceFlag=
+  (ppfDiscreteGpu,ppfZink,ppfFeralGamemode);
+var Field:TPrismEditablePerformanceFlag; F:TPrismPerformanceFlag;
+  Current:TPrismPerformanceView; D:TPrismPerformanceDTO; Ready:Boolean; SummaryText:string;
+  function BoolText(V:Boolean):string;
+  begin if V then Result:=rsPrismPreviewTrue else Result:=rsPrismPreviewFalse; end;
+  function SourceText(V:TPrismEffectiveSource):string;
+  begin
+    case V of pesGlobal:Result:=rsPrismDraftGlobal; pesInstance:Result:=rsPrismDraftInstance;
+      else Result:=rsPrismDraftDefault; end;
+  end;
+begin
+  if not Assigned(FPrismDraftPanel) then Exit;
+  FPrismDraftUpdating:=True;
+  try
+    Current:=FPrismPerformanceBaseline.Current; D:=FPrismPerformanceDTO;
+    Ready:=FPrismPerformanceBaseline.Initialized;
+    FPrismDraftGroup.Enabled:=Ready; FPrismDraftGroup.ItemIndex:=Ord(FPrismPerformanceDraft.Group);
+    FPrismDraftReset.Enabled:=FPrismPerformanceDirty;
+    for Field:=Low(Field) to High(Field) do
+    begin
+      F:=Flags[Field]; FPrismDraftFields[Field].Enabled:=Ready;
+      FPrismDraftFields[Field].ItemIndex:=Ord(FPrismPerformanceDraft.Fields[Field]);
+      SummaryText:='';
+      if Ready then SummaryText:=Format(rsPrismDraftValue,[BoolText(Current.Flags[F].Value),SourceText(Current.Flags[F].Source)]);
+      if Ready and (D.Status in [ppvsReady,ppvsNoChanges]) then
+        SummaryText+=LineEnding+Format(rsPrismDraftProposed,[BoolText(D.Proposed.Flags[F].Value),SourceText(D.Proposed.Flags[F].Source)]);
+      FPrismDraftCurrent[Field].Caption:=SummaryText;
+    end;
+    FPrismDraftGate.Caption:='';
+    if Ready then
+      if D.Status in [ppvsReady,ppvsNoChanges] then
+        FPrismDraftGate.Caption:=Format(rsPrismDraftGate,[BoolText(Current.GateValue),BoolText(D.Proposed.GateValue)])
+      else FPrismDraftGate.Caption:=Format(rsPrismDraftCurrentGate,[BoolText(Current.GateValue)]);
+    SummaryText:=rsPrismDraftLoadFirst;
+    if Ready or (D.Status=ppvsUnsupported) then
+      case D.Status of
+        ppvsReady:SummaryText:=rsPrismDraftReady;
+        ppvsNoChanges:SummaryText:=rsPrismDraftNoChanges;
+        ppvsStale:SummaryText:=rsPrismDraftStale;
+        ppvsUnsupported:
+          if D.SettingsReason=ppdrInactiveFieldIntent then SummaryText:=rsPrismDraftInactive
+          else SummaryText:=rsPrismDraftUnsupported;
+      end;
+    if Ready and (D.Status in [ppvsReady,ppvsNoChanges]) then
+    begin
+      if D.InheritanceFreeze then SummaryText+=LineEnding+Format(rsPrismDraftFreeze,
+        [BoolText(Current.Flags[ppfMangoHud].Value),BoolText(D.Proposed.Flags[ppfMangoHud].Value)])
+      else SummaryText+=LineEnding+Format(rsPrismDraftMango,
+        [BoolText(Current.Flags[ppfMangoHud].Value),BoolText(D.Proposed.Flags[ppfMangoHud].Value)]);
+    end;
+    FPrismDraftStatus.Caption:=SummaryText;
+  finally FPrismDraftUpdating:=False; end;
+end;
+
+procedure Tgoverlayform.PrismPerformancePanelResize(Sender:TObject);
+var Field:TPrismEditablePerformanceFlag;
+begin
+  if not Assigned(FPrismDraftPanel) or not Assigned(FPrismDraftStatus) then Exit;
+  FPrismDraftNotice.Width:=Max(1,FPrismDraftPanel.ClientWidth-24);
+  FPrismDraftStatus.Width:=Max(1,FPrismDraftPanel.ClientWidth-24);
+  FPrismDraftGate.Width:=Max(1,FPrismDraftPanel.ClientWidth-FPrismDraftGate.Left-12);
+  for Field:=Low(Field) to High(Field) do
+    FPrismDraftCurrent[Field].Width:=Max(1,FPrismDraftPanel.ClientWidth-FPrismDraftCurrent[Field].Left-12);
+end;
+
+procedure Tgoverlayform.CreatePrismPerformanceControls;
+var L:TLabel; Field:TPrismEditablePerformanceFlag; Y:Integer;
+  function LabelAt(const Caption:string; X,Top,W,H:Integer):TLabel;
+  begin
+    Result:=TLabel.Create(Self); Result.Parent:=FPrismDraftPanel;
+    Result.Caption:=Caption; Result.AutoSize:=False; Result.WordWrap:=True;
+    Result.ShowAccelChar:=False; Result.SetBounds(X,Top,W,H);
+    Result.Font.Color:=clWhite;
+  end;
+  procedure Combo(C:TComboBox; Top:Integer);
+  begin
+    C.Parent:=FPrismDraftPanel; C.SetBounds(164,Top,184,28);
+    C.Style:=csDropDownList; C.OnChange:=@PrismPerformanceChange;
+  end;
+begin
+  FPrismDraftPanel:=TPanel.Create(Self); FPrismDraftPanel.Parent:=FPrismTweaksPage;
+  FPrismDraftPanel.Align:=alTop; FPrismDraftPanel.Height:=316;
+  FPrismDraftPanel.BevelOuter:=bvNone; FPrismDraftPanel.Caption:='';
+  FPrismDraftNotice:=LabelAt(rsPrismDraftNotice,12,8,Max(1,FPrismDraftPanel.ClientWidth-24),36);
+  L:=LabelAt(rsPrismDraftGroup,12,50,148,28);
+  FPrismDraftGroup:=TComboBox.Create(Self); FPrismDraftGroup.Name:='PrismPerformanceGroup';
+  Combo(FPrismDraftGroup,46);
+  FPrismDraftGroup.Items.Add(rsPrismDraftGroupKeep); FPrismDraftGroup.Items.Add(rsPrismDraftGroupGlobal);
+  FPrismDraftGroup.Items.Add(rsPrismDraftGroupInstance);
+  FPrismDraftGate:=LabelAt('',360,48,Max(1,FPrismDraftPanel.ClientWidth-372),36);
+  Y:=88;
+  for Field:=Low(Field) to High(Field) do
+  begin
+    case Field of
+      pefDiscreteGpu:L:=LabelAt(rsPrismPreviewMesa,12,Y+4,148,32);
+      pefZink:L:=LabelAt(rsPrismPreviewZink,12,Y+4,148,32);
+      pefFeralGamemode:L:=LabelAt(rsPrismPreviewGameMode,12,Y+4,148,32);
+    end;
+    FPrismDraftFields[Field]:=TComboBox.Create(Self); Combo(FPrismDraftFields[Field],Y);
+    FPrismDraftFields[Field].Name:='PrismPerformanceField'+IntToStr(Ord(Field));
+    FPrismDraftFields[Field].Items.Add(rsPrismDraftKeep); FPrismDraftFields[Field].Items.Add(rsPrismDraftInherit);
+    FPrismDraftFields[Field].Items.Add(rsPrismDraftOn); FPrismDraftFields[Field].Items.Add(rsPrismDraftOff);
+    FPrismDraftCurrent[Field]:=LabelAt('',360,Y,Max(1,FPrismDraftPanel.ClientWidth-372),42);
+    Inc(Y,44);
+  end;
+  FPrismDraftReload:=TButton.Create(Self); FPrismDraftReload.Parent:=FPrismDraftPanel;
+  FPrismDraftReload.Name:='PrismPerformanceReload'; FPrismDraftReload.Caption:=rsPrismDraftLoad;
+  FPrismDraftReload.SetBounds(12,222,286,28); FPrismDraftReload.OnClick:=@PrismPerformanceReloadClick;
+  FPrismDraftReset:=TButton.Create(Self); FPrismDraftReset.Parent:=FPrismDraftPanel;
+  FPrismDraftReset.Name:='PrismPerformanceReset'; FPrismDraftReset.Caption:=rsPrismDraftReset;
+  FPrismDraftReset.SetBounds(310,222,160,28); FPrismDraftReset.OnClick:=@PrismPerformanceResetClick;
+  FPrismDraftStatus:=LabelAt('',12,258,Max(1,FPrismDraftPanel.ClientWidth-24),52);
+  FPrismDraftPanel.OnResize:=@PrismPerformancePanelResize;
+  PrismPerformancePanelResize(nil);
+  RenderPrismPerformanceDraft;
 end;
 
 procedure Tgoverlayform.ShowPrismTweaks;
@@ -11266,6 +11467,7 @@ begin
     FPrismTweaksText.ScrollBars:=ssVertical;
     TQtWidget(FPrismTweaksText.Handle).StyleSheet :=
       'QTextEdit { background-color: rgb(24,30,44); color: rgb(255,255,255); }';
+    CreatePrismPerformanceControls;
     RenderPrismPreview;
   end;
   if not FPrismContextPanel.Visible then

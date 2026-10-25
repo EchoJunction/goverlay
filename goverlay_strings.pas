@@ -185,6 +185,36 @@ resourcestring
   rsPython3Missing = 'python3 is not installed or not in PATH.';
   rsSteamShortcutFailed = 'Error (Code %d):' + LineEnding + '%s';
 
+  // Prism performance drafts: explicit local intent, no Prism publication.
+  rsPrismDraftNotice = 'Performance draft only; not applied to Prism. Apply is unavailable. Runtime support is unverified.';
+  rsPrismDraftLoad = 'Load / reload and discard draft';
+  rsPrismDraftReset = 'Discard draft';
+  rsPrismDraftPending = 'Performance draft kept. Return to Tweaks and discard or reload it before leaving this instance.';
+  rsPrismDraftLoadFirst = 'Load current Prism performance settings to edit a draft.';
+  rsPrismDraftGroup = 'Performance source';
+  rsPrismDraftGroupKeep = 'Keep current source';
+  rsPrismDraftGroupGlobal = 'Use global settings';
+  rsPrismDraftGroupInstance = 'Instance override';
+  rsPrismDraftKeep = 'Keep current';
+  rsPrismDraftInherit = 'Inherit global';
+  rsPrismDraftOn = 'On';
+  rsPrismDraftOff = 'Off';
+  rsPrismDraftDefault = 'default';
+  rsPrismDraftGlobal = 'global';
+  rsPrismDraftInstance = 'instance';
+  rsPrismDraftValue = 'Current: %s (%s)';
+  rsPrismDraftProposed = 'Draft: %s (%s)';
+  rsPrismDraftCurrentGate = 'Current override: %s';
+  rsPrismDraftGate = 'Override: %s -> %s';
+  rsPrismDraftReady = 'Draft is valid; no changes applied.';
+  rsPrismDraftNoChanges = 'No proposed performance changes; no changes applied.';
+  rsPrismDraftStale = 'Performance settings changed. Draft kept; reload explicitly before continuing.';
+  rsPrismDraftUnsupported = 'Performance draft unavailable: settings could not be safely read or interpreted. Draft kept.';
+  rsPrismDraftInactive = 'Per-setting choices require an instance performance override. Draft kept.';
+  rsPrismDraftFreeze = 'Instance override copies all four effective performance values before your choices. MangoHud: %s -> %s.';
+  rsPrismDraftMango = 'MangoHud sibling: %s -> %s. Its binding proposal remains separate.';
+  rsPrismBindingSummary = 'Separate MangoHud binding preview (not this performance draft)';
+
   // Tweaks tab
   rsAntiLagBlockedByKorthos = 'You cannot enable AMD Anti-Lag 2 [MESA] while any '
     + 'Korthos low latency layer option is active.';
