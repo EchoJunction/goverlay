@@ -16,6 +16,8 @@ type
     procedure SetUp; override;
     procedure TearDown; override;
   published
+    procedure TestPrismTweaksCategoriesAndRefresh;
+    procedure TestPrismTweaksDirtyRoundTrip;
     procedure TestReadOnlyPreviewAndContext;
     procedure TestDistinctLocalProfilesAndReadonlySelection;
     procedure TestPendingEditAndFailurePreserveContext;
@@ -36,7 +38,7 @@ type
   end;
 implementation
 uses overlayunit, gamecontext, configmanager, test_isolation, SHA1, ExtCtrls, StdCtrls, prismroots, BaseUnix,
-  mangohud_ui, games_tab, lossless_scaling_tab, reshade_tab, optiscaler_tab,
+  Forms, prismpreview, prismsnapshot, mangohud_ui, games_tab, lossless_scaling_tab, reshade_tab, optiscaler_tab,
   tweaks_md3, Graphics, FileUtil, overlay_utils, Controls, LCLType, goverlay_strings;
 
 procedure TPrismGuiTests.Put(const P, S: string);
@@ -100,6 +102,9 @@ end;
 procedure TPrismGuiTests.TearDown;
 var Blocker: string;
 begin
+  if goverlayform.IsPrismContext and Assigned(goverlayform.FPrismTweaksPage) and
+    (goverlayform.goverlayPageControl.ActivePage=goverlayform.FPrismTweaksPage) then
+    goverlayform.mangohudLabelClick(nil);
   goverlayform.autoSaveTimer.Enabled := False;
   if goverlayform.IsPrismContext and goverlayform.FProfileDirty then
   begin
@@ -320,6 +325,121 @@ begin
   AssertTrue('global save recovers after path repair', goverlayform.TrySaveMangoHudConfig);
   AssertFalse('successful save clears global dirty state', goverlayform.FProfileDirty);
   AssertTrue('Prism transition succeeds after recovery', goverlayform.SelectPrismInstance(A));
+end;
+
+procedure TPrismGuiTests.TestPrismTweaksCategoriesAndRefresh;
+var Before,Mango,Tweaks:string; OldWidth,OldMin:Integer;
+begin
+  A.InstallationKey:='prism-root-'+SHA1Print(SHA1String(A.DataRoot));
+  Put(A.DataRoot+'/prismlauncher.cfg','[General]'+LineEnding+'ConfigVersion=1.3'+LineEnding+
+    'UseDiscreteGpu=true'+LineEnding+'UseZink=false'+LineEnding+'EnableFeralGamemode=true');
+  AssertTrue(goverlayform.SelectPrismInstance(A));
+  Before:=Snapshot(Base);
+  goverlayform.PrismReviewChangesClick(nil);
+  Mango:=goverlayform.FPrismPreviewText.Text; Tweaks:=goverlayform.FPrismTweaksText.Text;
+  AssertTrue(Pos(rsPrismPreviewMangoHud+':',Mango)>0);
+  AssertEquals(0,Pos(rsPrismPreviewMesa+':',Mango));
+  AssertEquals(0,Pos(rsPrismPreviewZink+':',Mango));
+  AssertEquals(0,Pos(rsPrismPreviewGameMode+':',Mango));
+  AssertEquals(0,Pos(rsPrismPreviewPerformanceGate+':',Mango));
+  AssertTrue(Pos(rsPrismPreviewEnvGate+':',Mango)>0);
+  AssertTrue(Pos(Format(rsPrismPreviewBool,[rsPrismPreviewMesa,rsPrismPreviewTrue,rsPrismPreviewTrue]),Tweaks)>0);
+  AssertTrue(Pos(Format(rsPrismPreviewBool,[rsPrismPreviewZink,rsPrismPreviewFalse,rsPrismPreviewFalse]),Tweaks)>0);
+  AssertTrue(Pos(rsPrismPreviewGameMode+':',Tweaks)>0);
+  AssertTrue(Pos(rsPrismPreviewPerformanceGate+':',Tweaks)>0);
+  AssertTrue(Pos(rsPrismTweaksSiblings,Tweaks)>0);
+  AssertTrue(goverlayform.FPrismPreviewDTO.PerformanceFreeze);
+  goverlayform.tweaksLabelClick(nil);
+  AssertTrue(goverlayform.goverlayPageControl.ActivePage=goverlayform.FPrismTweaksPage);
+  AssertTrue(goverlayform.FPrismTweaksText.ReadOnly);
+  AssertTrue(goverlayform.FNavItems[4].Visible);
+  AssertFalse(goverlayform.tweaksTabSheet.TabVisible);
+  AssertFalse(goverlayform.launchArgsTabSheet.TabVisible);
+  AssertFalse(goverlayform.FNavToolBtns[3].Visible);
+  AssertEquals(Before,Snapshot(Base));
+  AssertEquals(Tweaks,goverlayform.FPrismTweaksText.Text);
+  { Navigation reuses the advisory DTO, never performs a hidden refresh. }
+  Put(A.DataRoot+'/prismlauncher.cfg','malformed SECRET_REFRESH_CANARY');
+  goverlayform.mangohudLabelClick(nil); goverlayform.tweaksLabelClick(nil);
+  AssertEquals(Tweaks,goverlayform.FPrismTweaksText.Text);
+  AssertEquals(Mango,goverlayform.FPrismPreviewText.Text);
+  Before:=Snapshot(Base);
+  goverlayform.PrismReviewChangesClick(nil);
+  AssertTrue(Pos(rsPrismPreviewUnsupported,goverlayform.FPrismTweaksText.Text)>0);
+  AssertTrue(Pos(rsPrismPreviewUnsupported,goverlayform.FPrismPreviewText.Text)>0);
+  AssertEquals(0,Pos('SECRET_REFRESH_CANARY',goverlayform.FPrismTweaksText.Text));
+  AssertEquals('',goverlayform.FPrismPreviewDTO.GeneratedSelector);
+  AssertEquals(Before,Snapshot(Base));
+  OldWidth:=goverlayform.Width; OldMin:=goverlayform.Constraints.MinWidth;
+  try
+    goverlayform.Constraints.MinWidth:=800; goverlayform.Width:=800;
+    goverlayform.OnResize(goverlayform);
+    AssertTrue(goverlayform.FPrismTweaksText.Width<=goverlayform.FPrismTweaksPage.ClientWidth);
+    AssertTrue(goverlayform.FPrismReviewButton.Left+goverlayform.FPrismReviewButton.Width<=goverlayform.FPrismContextPanel.ClientWidth);
+  finally goverlayform.Width:=OldWidth; goverlayform.Constraints.MinWidth:=OldMin; end;
+  goverlayform.gamesLabelClick(nil);
+  AssertFalse(goverlayform.FPrismHasPreview);
+  AssertEquals('',goverlayform.FPrismTweaksText.Text);
+  AssertFalse(goverlayform.FPrismTweaksPage.TabVisible);
+  AssertSentinels;
+end;
+
+procedure TPrismGuiTests.TestPrismTweaksDirtyRoundTrip;
+var Before,ProfileBefore,Dir,ErrorText:string; CloseAction:TCloseAction;
+begin
+  A.InstallationKey:='prism-root-'+SHA1Print(SHA1String(A.DataRoot)); B.InstallationKey:=A.InstallationKey;
+  Put(A.DataRoot+'/prismlauncher.cfg','[General]'+LineEnding+'ConfigVersion=1.3'+LineEnding);
+  AssertTrue(goverlayform.SelectPrismInstance(B));
+  goverlayform.FLoadingConfig:=True; goverlayform.hudtitleEdit.Text:='Saved B';
+  goverlayform.FLoadingConfig:=False; goverlayform.saveBitBtnClick(nil);
+  AssertTrue(goverlayform.SelectPrismInstance(A));
+  goverlayform.FLoadingConfig:=True; goverlayform.hudtitleEdit.Text:='Original A';
+  goverlayform.FLoadingConfig:=False; goverlayform.saveBitBtnClick(nil);
+  Dir:=goverlayform.ActiveProfileConfigDir;
+  goverlayform.FLoadingConfig:=True; goverlayform.hudtitleEdit.Text:='Pending Tweaks';
+  goverlayform.FLoadingConfig:=False; goverlayform.StartAutoSaveTimer;
+  Before:=Snapshot(Base); ProfileBefore:=Snapshot(Dir);
+  goverlayform.tweaksLabelClick(nil);
+  AssertFalse(goverlayform.autoSaveTimer.Enabled);
+  AssertTrue(goverlayform.FPrismDeferredAutoSave);
+  AssertTrue(goverlayform.FProfileDirty);
+  goverlayform.PrismReviewChangesClick(nil);
+  goverlayform.autoSaveTimerTimer(nil);
+  goverlayform.tweaksTabSheetShow(nil); goverlayform.launchArgsTabSheetShow(nil);
+  goverlayform.SaveTweaksConfig; TTweaksMD3Helper(goverlayform.FTweaksHelper).SaveTweaksConfig;
+  goverlayform.PrismCloneGlobalClick(nil);
+  AssertFalse(goverlayform.FPrismCloneButton.Visible);
+  AssertFalse(goverlayform.CloneGlobalMangoHudToPrism(True,ErrorText));
+  AssertFalse('dirty switch safely aborts',goverlayform.SelectPrismInstance(B));
+  goverlayform.HomeGlobalBtnClick(nil); goverlayform.gamesLabelClick(nil);
+  CloseAction:=caFree;
+  goverlayform.FormClose(nil,CloseAction);
+  AssertEquals('dirty Tweaks close blocked',Ord(caNone),Ord(CloseAction));
+  AssertFalse('closing state untouched',goverlayform.FClosing);
+  AssertTrue(goverlayform.FPrismDeferredAutoSave);
+  AssertFalse(goverlayform.autoSaveTimer.Enabled);
+  AssertTrue(goverlayform.FProfileDirty);
+  AssertTrue(goverlayform.IsPrismContext);
+  AssertEquals(A.StableKey,goverlayform.FActiveProfile.StableKey);
+  AssertEquals('Pending Tweaks',goverlayform.hudtitleEdit.Text);
+  AssertEquals(Before,Snapshot(Base)); AssertEquals(ProfileBefore,Snapshot(Dir));
+  goverlayform.mangohudLabelClick(nil);
+  AssertEquals('Pending Tweaks',goverlayform.hudtitleEdit.Text);
+  AssertTrue(goverlayform.autoSaveTimer.Enabled); AssertTrue(goverlayform.FProfileDirty);
+  AssertEquals(Before,Snapshot(Base)); AssertEquals(ProfileBefore,Snapshot(Dir));
+  { Ordinary MangoHud autosave remains available after returning. }
+  goverlayform.autoSaveTimerTimer(nil);
+  AssertTrue(Pos('Pending Tweaks',ReadText(Dir+'MangoHud.conf'))>0);
+  AssertFalse(goverlayform.FProfileDirty);
+  goverlayform.tweaksLabelClick(nil);
+  AssertTrue('clean switch succeeds',goverlayform.SelectPrismInstance(B));
+  AssertEquals('Saved B',goverlayform.hudtitleEdit.Text);
+  AssertFalse(goverlayform.FPrismHasPreview);
+  goverlayform.tweaksLabelClick(nil); goverlayform.HomeGlobalBtnClick(nil);
+  AssertFalse(goverlayform.IsPrismContext);
+  AssertFalse(goverlayform.FPrismTweaksPage.TabVisible);
+  AssertTrue('legacy Tweaks navigation restored',goverlayform.FNavItems[4].Visible);
+  AssertSentinels;
 end;
 
 procedure TPrismGuiTests.TestReadOnlyPreviewAndContext;

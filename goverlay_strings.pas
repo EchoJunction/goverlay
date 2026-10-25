@@ -49,6 +49,12 @@ resourcestring
   rsPrismRootsUnavailable = '%d saved directories are unavailable; use Manage Prism directories to remove or rescan them.';
   rsPrismRootsEmpty = 'No games detected. Locate a Prism data directory or use the library menu to add game folders.';
   rsPrismRootSaveBlocked = 'Pending profile edits could not be saved. Save them before changing or rescanning directories.';
+  rsPrismTweaksTitle = 'Prism Tweaks — preview only';
+  rsPrismTweaksReview = 'Preview only; no changes applied; settings may change. Use Review proposed Prism changes to read current settings.';
+  rsPrismTweaksPending = 'Unsaved MangoHud edits are preserved. Return to MangoHud before changing instance or context.';
+  rsPrismTweaksFreeze = 'Performance inheritance copied locally: %s. Copied local overrides keep these three effective values.';
+  rsPrismTweaksSiblings = 'Enabling local performance overrides preserves all effective siblings: discrete GPU, Zink and GameMode shown here, plus MangoHud shown in MangoHud.';
+  rsPrismMangoFreeze = 'Inherited settings copied locally — performance: %s; environment: %s. Review performance details in Tweaks.';
   rsPrismReviewChanges = 'Review proposed Prism changes';
   rsPrismPreviewNotice = 'Preview only; no changes applied; settings may change.';
   rsPrismPreviewReady = 'Proposed launch settings (integration remains unavailable):';
