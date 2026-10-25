@@ -16,6 +16,9 @@ type
     procedure SetUp; override;
     procedure TearDown; override;
   published
+    procedure TestPrismPerformanceDraftControls;
+    procedure TestPrismPerformanceDirtyGuards;
+    procedure TestPrismPerformanceStaleReload;
     procedure TestPrismGamesSubmenuCatalog;
     procedure TestPrismGamesSubmenuDirtyGuard;
     procedure TestPrismTweaksCategoriesAndRefresh;
@@ -40,7 +43,7 @@ type
   end;
 implementation
 uses overlayunit, gamecontext, configmanager, test_isolation, SHA1, ExtCtrls, StdCtrls, prismroots, BaseUnix, ComCtrls,
-  Forms, prismpreview, prismsnapshot, mangohud_ui, games_tab, lossless_scaling_tab, reshade_tab, optiscaler_tab,
+  Forms, prismpreview, prismsnapshot, prismperformance, prismperformancepreview, mangohud_ui, games_tab, lossless_scaling_tab, reshade_tab, optiscaler_tab,
   tweaks_md3, Graphics, FileUtil, overlay_utils, Controls, LCLType, goverlay_strings;
 
 procedure TPrismGuiTests.Put(const P, S: string);
@@ -104,6 +107,8 @@ end;
 procedure TPrismGuiTests.TearDown;
 var Blocker: string;
 begin
+  if goverlayform.IsPrismContext and goverlayform.FPrismPerformanceDirty then
+    goverlayform.PrismPerformanceResetClick(nil);
   if goverlayform.IsPrismContext and Assigned(goverlayform.FPrismTweaksPage) and
     (goverlayform.goverlayPageControl.ActivePage=goverlayform.FPrismTweaksPage) then
     goverlayform.mangohudLabelClick(nil);
@@ -327,6 +332,121 @@ begin
   AssertTrue('global save recovers after path repair', goverlayform.TrySaveMangoHudConfig);
   AssertFalse('successful save clears global dirty state', goverlayform.FProfileDirty);
   AssertTrue('Prism transition succeeds after recovery', goverlayform.SelectPrismInstance(A));
+end;
+
+procedure TPrismGuiTests.TestPrismPerformanceDraftControls;
+var Before,BindingBefore:string; Field:TPrismEditablePerformanceFlag; OldWidth,OldMin:Integer;
+begin
+  A.InstallationKey:='prism-root-'+SHA1Print(SHA1String(A.DataRoot));
+  Put(A.DataRoot+'/prismlauncher.cfg','[General]'#10'ConfigVersion=1.3'#10+
+    'EnableMangoHud=true'#10'UseDiscreteGpu=true'#10'UseZink=false'#10'EnableFeralGamemode=false'#10);
+  AssertTrue(goverlayform.SelectPrismInstance(A)); goverlayform.tweaksLabelClick(nil);
+  AssertFalse(goverlayform.FPrismPerformanceBaseline.Initialized);
+  AssertFalse(goverlayform.FPrismDraftGroup.Enabled); Before:=Snapshot(Base);
+  goverlayform.PrismPerformanceReloadClick(nil);
+  AssertTrue(goverlayform.FPrismDraftGroup.Enabled);
+  AssertTrue(goverlayform.FPrismPerformanceBaseline.Initialized);
+  AssertTrue(Pos(rsPrismDraftGlobal,goverlayform.FPrismDraftCurrent[pefDiscreteGpu].Caption)>0);
+  BindingBefore:=goverlayform.FPrismTweaksText.Text;
+  goverlayform.FPrismDraftGroup.ItemIndex:=Ord(ppgInstance); goverlayform.PrismPerformanceChange(nil);
+  goverlayform.FPrismDraftFields[pefDiscreteGpu].ItemIndex:=Ord(ppiOff); goverlayform.PrismPerformanceChange(nil);
+  goverlayform.FPrismDraftFields[pefZink].ItemIndex:=Ord(ppiOn); goverlayform.PrismPerformanceChange(nil);
+  goverlayform.FPrismDraftFields[pefFeralGamemode].ItemIndex:=Ord(ppiOn); goverlayform.PrismPerformanceChange(nil);
+  AssertTrue(goverlayform.FPrismPerformanceDirty); AssertFalse(goverlayform.FProfileDirty);
+  AssertFalse(goverlayform.autoSaveTimer.Enabled); AssertFalse(goverlayform.FPrismHasPreview);
+  AssertTrue(goverlayform.FPrismPerformanceDTO.InheritanceFreeze);
+  AssertFalse(goverlayform.FPrismPerformanceDTO.Proposed.Flags[ppfDiscreteGpu].Value);
+  AssertTrue(goverlayform.FPrismPerformanceDTO.Proposed.Flags[ppfZink].Value);
+  AssertTrue(goverlayform.FPrismPerformanceDTO.Proposed.Flags[ppfFeralGamemode].Value);
+  AssertTrue(goverlayform.FPrismPerformanceDTO.Proposed.Flags[ppfMangoHud].Value);
+  AssertEquals(BindingBefore,goverlayform.FPrismTweaksText.Text);
+  AssertTrue(Pos('MangoHud',goverlayform.FPrismDraftStatus.Caption)>0);
+  goverlayform.PrismReviewChangesClick(nil);
+  AssertTrue(goverlayform.FPrismPerformanceDirty); AssertTrue(goverlayform.FPrismHasPreview);
+  AssertTrue(Pos(rsPrismBindingSummary,goverlayform.FPrismTweaksText.Text)>0);
+  AssertEquals(Before,Snapshot(Base)); AssertSentinels;
+  OldWidth:=goverlayform.Width; OldMin:=goverlayform.Constraints.MinWidth;
+  try
+    goverlayform.Constraints.MinWidth:=800; goverlayform.Width:=800; goverlayform.OnResize(goverlayform);
+    for Field:=Low(Field) to High(Field) do
+    begin
+      AssertTrue(goverlayform.FPrismDraftFields[Field].Enabled);
+      AssertTrue('Current/source label fits narrow panel: '+IntToStr(goverlayform.FPrismDraftCurrent[Field].Left)+'+'+IntToStr(goverlayform.FPrismDraftCurrent[Field].Width)+'<='+IntToStr(goverlayform.FPrismDraftPanel.ClientWidth),goverlayform.FPrismDraftCurrent[Field].Left+goverlayform.FPrismDraftCurrent[Field].Width<=goverlayform.FPrismDraftPanel.ClientWidth);
+    end;
+  finally goverlayform.Width:=OldWidth; goverlayform.Constraints.MinWidth:=OldMin; end;
+  goverlayform.PrismPerformanceResetClick(nil); AssertFalse(goverlayform.FPrismPerformanceDirty);
+  goverlayform.FPrismDraftGroup.ItemIndex:=Ord(ppgGlobal); goverlayform.PrismPerformanceChange(nil);
+  AssertEquals(Ord(ppvsNoChanges),Ord(goverlayform.FPrismPerformanceDTO.Status));
+  goverlayform.FPrismDraftFields[pefZink].ItemIndex:=Ord(ppiInherit); goverlayform.PrismPerformanceChange(nil);
+  AssertEquals(Ord(ppvsUnsupported),Ord(goverlayform.FPrismPerformanceDTO.Status));
+  AssertEquals(rsPrismDraftInactive,goverlayform.FPrismDraftStatus.Caption);
+  goverlayform.PrismPerformanceResetClick(nil); goverlayform.gamesLabelClick(nil);
+  AssertFalse(goverlayform.FPrismPerformanceBaseline.Initialized);
+  AssertFalse(goverlayform.FPrismPerformanceDirty);
+end;
+
+procedure TPrismGuiTests.TestPrismPerformanceDirtyGuards;
+var Before,ErrorText:string; CloseAction:TCloseAction;
+begin
+  A.InstallationKey:='prism-root-'+SHA1Print(SHA1String(A.DataRoot)); B.InstallationKey:=A.InstallationKey;
+  Put(A.DataRoot+'/prismlauncher.cfg','[General]'#10'ConfigVersion=1.3'#10);
+  AssertTrue(goverlayform.SelectPrismInstance(A));
+  goverlayform.FLoadingConfig:=True; goverlayform.hudtitleEdit.Text:='Pending Both';
+  goverlayform.FLoadingConfig:=False; goverlayform.StartAutoSaveTimer;
+  goverlayform.tweaksLabelClick(nil); goverlayform.PrismPerformanceReloadClick(nil);
+  goverlayform.FPrismDraftGroup.ItemIndex:=Ord(ppgInstance); goverlayform.PrismPerformanceChange(nil);
+  Before:=Snapshot(Base);
+  AssertFalse(goverlayform.SelectPrismInstance(B)); goverlayform.HomeGlobalBtnClick(nil);
+  goverlayform.PrismGamesClick(nil); goverlayform.gamesLabelClick(nil);
+  AssertFalse(TGamesTabHelper(goverlayform.FGamesHelper).RemovePrismRoot(A.DataRoot,ErrorText));
+  CloseAction:=caFree; goverlayform.FormClose(nil,CloseAction);
+  AssertEquals(Ord(caNone),Ord(CloseAction)); AssertFalse(goverlayform.FClosing);
+  AssertEquals(A.StableKey,goverlayform.FActiveProfile.StableKey);
+  AssertTrue(goverlayform.FPrismPerformanceDirty); AssertFalse(goverlayform.autoSaveTimer.Enabled);
+  AssertEquals(Before,Snapshot(Base));
+  goverlayform.mangohudLabelClick(nil);
+  AssertTrue(goverlayform.FPrismPerformanceDirty); AssertTrue(goverlayform.autoSaveTimer.Enabled);
+  AssertEquals('Pending Both',goverlayform.hudtitleEdit.Text);
+  CloseAction:=caFree; goverlayform.FormClose(nil,CloseAction);
+  AssertEquals(Ord(caNone),Ord(CloseAction)); AssertFalse(goverlayform.SelectPrismInstance(B));
+  AssertEquals(Before,Snapshot(Base));
+  goverlayform.tweaksLabelClick(nil); goverlayform.PrismPerformanceResetClick(nil);
+  AssertFalse(goverlayform.FPrismPerformanceDirty); AssertTrue(goverlayform.FProfileDirty);
+  goverlayform.mangohudLabelClick(nil); goverlayform.autoSaveTimerTimer(nil);
+  AssertFalse(goverlayform.FProfileDirty); AssertTrue(goverlayform.SelectPrismInstance(B));
+  AssertFalse(goverlayform.FPrismPerformanceBaseline.Initialized);
+  AssertEquals(Before,Snapshot(Base)); AssertSentinels;
+end;
+
+procedure TPrismGuiTests.TestPrismPerformanceStaleReload;
+var Before,Summary:string;
+begin
+  A.InstallationKey:='prism-root-'+SHA1Print(SHA1String(A.DataRoot));
+  Put(A.DataRoot+'/prismlauncher.cfg','[General]'#10'ConfigVersion=1.3'#10'UseZink=false'#10);
+  AssertTrue(goverlayform.SelectPrismInstance(A)); goverlayform.tweaksLabelClick(nil);
+  goverlayform.PrismPerformanceReloadClick(nil); goverlayform.FPrismDraftGroup.ItemIndex:=Ord(ppgInstance);
+  goverlayform.PrismPerformanceChange(nil);
+  Put(A.DataRoot+'/prismlauncher.cfg','[General]'#10'ConfigVersion=1.3'#10'UseZink=true'#10);
+  Before:=Snapshot(Base); goverlayform.PrismPerformanceChange(nil);
+  AssertEquals(Ord(ppvsStale),Ord(goverlayform.FPrismPerformanceDTO.Status));
+  AssertTrue(goverlayform.FPrismPerformanceDirty); AssertEquals(rsPrismDraftStale,goverlayform.FPrismDraftStatus.Caption);
+  goverlayform.mangohudLabelClick(nil); goverlayform.tweaksLabelClick(nil);
+  AssertEquals(Ord(ppgInstance),Ord(goverlayform.FPrismPerformanceDraft.Group));
+  AssertEquals(Before,Snapshot(Base)); goverlayform.PrismPerformanceReloadClick(nil);
+  AssertFalse(goverlayform.FPrismPerformanceDirty);
+  AssertTrue(goverlayform.FPrismPerformanceBaseline.Current.Flags[ppfZink].Value);
+  goverlayform.FPrismDraftGroup.ItemIndex:=Ord(ppgInstance); goverlayform.PrismPerformanceChange(nil);
+  Put(A.DataRoot+'/prismlauncher.cfg','[General]'#10'ConfigVersion=1.3'#10'UseZink=SECRET_DRAFT_CANARY'#10);
+  Before:=Snapshot(Base); goverlayform.PrismPerformanceReloadClick(nil);
+  AssertTrue(goverlayform.FPrismPerformanceDirty);
+  AssertTrue(goverlayform.FPrismPerformanceBaseline.Current.Flags[ppfZink].Value);
+  AssertEquals(Ord(ppvsUnsupported),Ord(goverlayform.FPrismPerformanceDTO.Status));
+  Summary:=goverlayform.FPrismDraftStatus.Caption+goverlayform.FPrismDraftGate.Caption+
+    goverlayform.FPrismDraftCurrent[pefZink].Caption;
+  AssertEquals(0,Pos('SECRET_DRAFT_CANARY',Summary)); AssertEquals(Before,Snapshot(Base));
+  goverlayform.PrismPerformanceResetClick(nil); goverlayform.gamesLabelClick(nil);
+  AssertFalse(goverlayform.FPrismPerformanceBaseline.Initialized);
+  goverlayform.PrismPerformanceReloadClick(nil); AssertFalse(goverlayform.FPrismPerformanceBaseline.Initialized);
 end;
 
 procedure TPrismGuiTests.TestPrismGamesSubmenuCatalog;
