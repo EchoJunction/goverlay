@@ -1226,7 +1226,11 @@ type
     FPrismContextPanel: TPanel;
     FPrismContextTitle, FPrismContextRoot, FPrismContextWarning, FPrismContextMessage: TLabel;
     FPrismCloneButton, FPrismReviewButton: TButton;
-    FPrismPreviewText: TMemo;
+    FPrismPreviewText, FPrismTweaksText: TMemo;
+    FPrismTweaksPage: TTabSheet;
+    { Advisory DTO only: no raw snapshot/proposal or future Apply authority. }
+    FPrismPreviewDTO: TPrismPreviewDTO;
+    FPrismHasPreview, FPrismDeferredAutoSave: Boolean;
     FSelectedPrismInstance: TPrismInstance;
     FPrismContentTopSpacing: Integer;
     FPrismEnabledStates: array of record
@@ -1593,6 +1597,8 @@ type
     function CloneGlobalMangoHudToPrism(ReplaceExisting: Boolean; out Error: string): Boolean;
     procedure PrismCloneGlobalClick(Sender: TObject);
     procedure PrismReviewChangesClick(Sender: TObject);
+    procedure RenderPrismPreview;
+    procedure ShowPrismTweaks;
     function FlushPendingProfileEdits: Boolean;
     procedure ClearActiveProfileContext;
     procedure ApplyActiveProfileCapabilities;
@@ -2046,7 +2052,7 @@ end;
 
 procedure Tgoverlayform.tweaksLabelClick(Sender: TObject);
 begin
-  if IsPrismContext then Exit;
+  if IsPrismContext then begin ShowPrismTweaks; Exit; end;
   DbgLog('>> tweaksLabelClick BEGIN');
   SetNavActive(4);
 
@@ -3363,6 +3369,14 @@ procedure Tgoverlayform.FormClose(Sender: TObject; var CloseAction: TCloseAction
 var
   k: Integer;
 begin
+  if IsPrismContext and Assigned(FPrismTweaksPage) and
+    (goverlayPageControl.ActivePage=FPrismTweaksPage) and
+    (FProfileDirty or FPrismDeferredAutoSave) then
+  begin
+    ShowStatusMessage(rsPrismTweaksPending);
+    CloseAction:=caNone;
+    Exit;
+  end;
   SaveWindowGeometry;
   FClosing := True;
   if Assigned(FCoverThread) then
@@ -6028,7 +6042,11 @@ end;
 procedure Tgoverlayform.mangohudLabelClick(Sender: TObject);
 var
   GameCfgDir: string;
+  ReturningFromPrismTweaks: Boolean;
 begin
+  ReturningFromPrismTweaks:=IsPrismContext and not FLoadingConfig and Assigned(FPrismTweaksPage) and
+    (goverlayPageControl.ActivePage=FPrismTweaksPage);
+  if Assigned(FPrismTweaksPage) then FPrismTweaksPage.TabVisible:=False;
   DbgLog('>> mangohudLabelClick BEGIN');
 
   // In game mode, point MangoHud config to the game-specific folder
@@ -6075,10 +6093,16 @@ UpdateGeSpeedButtonState;
 UpdateGlobalEnableMenuItemVisibility;
 
 // Reload config when entering the MangoHud tab (global or game-specific)
-LoadMangoHudConfig;
+if not ReturningFromPrismTweaks then LoadMangoHudConfig;
   UpdateToolMissingDependencyBanners;
 
 ApplyActiveProfileCapabilities;
+if IsPrismContext then UpdatePrismContextPanel;
+if ReturningFromPrismTweaks then
+begin
+  if Assigned(autoSaveTimer) then autoSaveTimer.Enabled:=FPrismDeferredAutoSave;
+  FPrismDeferredAutoSave:=False;
+end;
 DbgLog('<< mangohudLabelClick END');
 end;
 
@@ -9281,6 +9305,13 @@ end;
 
 procedure Tgoverlayform.autoSaveTimerTimer(Sender: TObject);
 begin
+  if IsPrismContext and Assigned(FPrismTweaksPage) and
+    (goverlayPageControl.ActivePage=FPrismTweaksPage) then
+  begin
+    FPrismDeferredAutoSave:=FPrismDeferredAutoSave or autoSaveTimer.Enabled or FProfileDirty;
+    autoSaveTimer.Enabled:=False;
+    Exit;
+  end;
   autoSaveTimer.Enabled := False;
   TriggerAutoSave;
 end;
@@ -10898,6 +10929,13 @@ end;
 function Tgoverlayform.FlushPendingProfileEdits: Boolean;
 begin
   Result := True;
+  if IsPrismContext and Assigned(FPrismTweaksPage) and
+    (goverlayPageControl.ActivePage=FPrismTweaksPage) and
+    (FProfileDirty or FPrismDeferredAutoSave) then
+  begin
+    ShowStatusMessage(rsPrismTweaksPending);
+    Exit(False);
+  end;
   if not FProfileDirty and (not Assigned(autoSaveTimer) or not autoSaveTimer.Enabled) then Exit;
   autoSaveTimer.Enabled := False;
   try
@@ -10915,6 +10953,10 @@ begin
   if IsPrismContext and Assigned(statusBar) then statusBar.SimpleText := '';
   FActiveProfile := Default(TActiveProfileContext);
   FSelectedPrismInstance := Default(TPrismInstance);
+  FPrismPreviewDTO:=Default(TPrismPreviewDTO); FPrismHasPreview:=False;
+  FPrismDeferredAutoSave:=False;
+  if Assigned(FPrismTweaksPage) then FPrismTweaksPage.TabVisible:=False;
+  if Assigned(FPrismTweaksText) then FPrismTweaksText.Clear;
   if Assigned(FPrismPreviewText) then FPrismPreviewText.Clear;
   FProfileDirty := False;
   UpdatePrismContextPanel;
@@ -10926,6 +10968,8 @@ var Target, SourceFile: string; SourceLines, OriginalLines, Output: TStringList;
   Helper: TMangoHudUiHelper; WasLoading, LoadedSource: Boolean;
 begin
   Result := False; Error := rsPrismCloneFailed;
+  if IsPrismContext and Assigned(FPrismTweaksPage) and
+    (goverlayPageControl.ActivePage=FPrismTweaksPage) then Exit;
   if not Assigned(FMangoHelper) or
     not PrismCloneTarget(FActiveProfile, TConfigManager.GetHostDataDir, Target, Error) then Exit;
   SourceFile := GetGameConfigDir('') + 'MangoHud.conf';
@@ -10974,6 +11018,8 @@ end;
 procedure Tgoverlayform.PrismCloneGlobalClick(Sender: TObject);
 var Target, Error: string;
 begin
+  if IsPrismContext and Assigned(FPrismTweaksPage) and
+    (goverlayPageControl.ActivePage=FPrismTweaksPage) then Exit;
   if not PrismCloneTarget(FActiveProfile, TConfigManager.GetHostDataDir, Target, Error) then Exit;
   if CloneGlobalMangoHudToPrism(False, Error) then Exit;
   if Error = rsPrismCloneExists then
@@ -10997,11 +11043,16 @@ begin
     StopCube;
     FActiveProfile := Context;
     FSelectedPrismInstance := Instance;
+    FPrismPreviewDTO:=Default(TPrismPreviewDTO); FPrismHasPreview:=False;
+    FPrismDeferredAutoSave:=False;
+    if Assigned(FPrismTweaksPage) then FPrismTweaksPage.TabVisible:=False;
+    if Assigned(FPrismTweaksText) then FPrismTweaksText.Clear;
     if Assigned(FPrismPreviewText) then FPrismPreviewText.Clear;
     FActiveGameName := Context.DisplayName;
     FActiveGameIsNonSteam := False;
     MANGOHUDCFGFILE := Context.ConfigDir + 'MangoHud.conf';
     FLaunchCommand := '';
+    RenderPrismPreview;
     UpdatePrismContextPanel;
     ApplyActiveProfileCapabilities;
     mangohudLabelClick(nil);
@@ -11015,8 +11066,24 @@ begin
 end;
 
 procedure Tgoverlayform.PrismReviewChangesClick(Sender: TObject);
-var D:TPrismPreviewDTO; Pending:Boolean; F:TPrismPerformanceFlag;
-  Lines:TStringList;
+var Pending:Boolean;
+begin
+  if not IsPrismContext or (FSelectedPrismInstance.StableKey='') or
+    (FSelectedPrismInstance.StableKey<>FActiveProfile.StableKey) then Exit;
+  Pending:=Assigned(autoSaveTimer) and autoSaveTimer.Enabled;
+  if Assigned(autoSaveTimer) then autoSaveTimer.Enabled:=False;
+  try
+    FPrismPreviewDTO:=PreviewPrismEnable(FSelectedPrismInstance,TConfigManager.GetHostDataDir);
+    FPrismHasPreview:=True;
+    RenderPrismPreview;
+    UpdatePrismContextPanel;
+  finally
+    if Assigned(autoSaveTimer) then autoSaveTimer.Enabled:=Pending;
+  end;
+end;
+
+procedure Tgoverlayform.RenderPrismPreview;
+var D:TPrismPreviewDTO; Lines:TStringList; Tweaks:Boolean; View:Integer;
   function DisplayPath(const P:string):string;
   var I:SizeInt;
   begin
@@ -11029,53 +11096,75 @@ var D:TPrismPreviewDTO; Pending:Boolean; F:TPrismPerformanceFlag;
   procedure AddBool(const Title:string; const B:TPrismPreviewBool);
   begin Lines.Add(Format(rsPrismPreviewBool,[Title,BoolText(B.BeforeValue),BoolText(B.ProposedValue)])); end;
 begin
-  if not IsPrismContext or (FSelectedPrismInstance.StableKey='') or
-    (FSelectedPrismInstance.StableKey<>FActiveProfile.StableKey) then Exit;
-  { No event pumping, flush or save: defer the pending timer only for this read,
-    and retain its prior scheduling state and all editor dirty state. }
-  Pending:=Assigned(autoSaveTimer) and autoSaveTimer.Enabled;
-  if Assigned(autoSaveTimer) then autoSaveTimer.Enabled:=False;
+  if not Assigned(FPrismPreviewText) or not Assigned(FPrismTweaksText) then Exit;
+  FPrismPreviewText.Clear; FPrismTweaksText.Clear;
+  if not FPrismHasPreview then
+  begin FPrismTweaksText.Text:=rsPrismTweaksReview; Exit; end;
+  D:=FPrismPreviewDTO;
   Lines:=TStringList.Create;
   try
-    D:=PreviewPrismEnable(FSelectedPrismInstance,TConfigManager.GetHostDataDir);
-    Lines.Add(rsPrismPreviewNotice);
-    case D.Status of
-      ppsConflict: Lines.Add(rsPrismPreviewConflict);
-      ppsUnsupported:
-        begin
-          Lines.Add(rsPrismPreviewUnsupported);
-          case D.Reason of
-            pprLimit:Lines.Add(rsPrismPreviewLimit);
-            pprObservedChange:Lines.Add(rsPrismPreviewChanged);
-            pprInvalidSelection,pprIdentityChanged,pprAmbiguousIdentity:Lines.Add(rsPrismPreviewIdentity);
-            pprReadUnavailable,pprUnsafeRead:Lines.Add(rsPrismPreviewRead);
-            else Lines.Add(rsPrismPreviewSettings);
-          end;
-        end;
-      ppsReady:
-        begin
-          Lines.Add(rsPrismPreviewReady);
-          for F:=Low(F) to High(F) do
-            case F of
-              ppfMangoHud:AddBool(rsPrismPreviewMangoHud,D.Performance[F]);
-              ppfDiscreteGpu:AddBool(rsPrismPreviewMesa,D.Performance[F]);
-              ppfFeralGamemode:AddBool(rsPrismPreviewGameMode,D.Performance[F]);
-              ppfZink:AddBool(rsPrismPreviewZink,D.Performance[F]);
+    for View:=0 to 1 do
+    begin
+      Tweaks:=View=1; Lines.Clear; Lines.Add(rsPrismPreviewNotice);
+      case D.Status of
+        ppsConflict: Lines.Add(rsPrismPreviewConflict);
+        ppsUnsupported:
+          begin
+            Lines.Add(rsPrismPreviewUnsupported);
+            case D.Reason of
+              pprLimit:Lines.Add(rsPrismPreviewLimit);
+              pprObservedChange:Lines.Add(rsPrismPreviewChanged);
+              pprInvalidSelection,pprIdentityChanged,pprAmbiguousIdentity:Lines.Add(rsPrismPreviewIdentity);
+              pprReadUnavailable,pprUnsafeRead:Lines.Add(rsPrismPreviewRead);
+              else Lines.Add(rsPrismPreviewSettings);
             end;
-          AddBool(rsPrismPreviewPerformanceGate,D.PerformanceGate);
-          AddBool(rsPrismPreviewEnvGate,D.EnvGate);
-          Lines.Add(Format(rsPrismPreviewFreeze,[BoolText(D.PerformanceFreeze),BoolText(D.EnvFreeze)]));
-          Lines.Add(Format(rsPrismPreviewEnv,[D.CopiedEnvEntryCount,BoolText(D.SelectorAdded)]));
-          Lines.Add(rsPrismPreviewPreserved);
-          Lines.Add(rsPrismPreviewSelector+DisplayPath(D.GeneratedSelector));
-        end;
+          end;
+        ppsReady:
+          begin
+            Lines.Add(rsPrismPreviewReady);
+            if Tweaks then
+            begin
+              AddBool(rsPrismPreviewMesa,D.Performance[ppfDiscreteGpu]);
+              AddBool(rsPrismPreviewZink,D.Performance[ppfZink]);
+              AddBool(rsPrismPreviewGameMode,D.Performance[ppfFeralGamemode]);
+              AddBool(rsPrismPreviewPerformanceGate,D.PerformanceGate);
+              Lines.Add(Format(rsPrismTweaksFreeze,[BoolText(D.PerformanceFreeze)]));
+              Lines.Add(rsPrismTweaksSiblings);
+            end
+            else
+            begin
+              AddBool(rsPrismPreviewMangoHud,D.Performance[ppfMangoHud]);
+              AddBool(rsPrismPreviewEnvGate,D.EnvGate);
+              Lines.Add(Format(rsPrismPreviewEnv,[D.CopiedEnvEntryCount,BoolText(D.SelectorAdded)]));
+              Lines.Add(Format(rsPrismMangoFreeze,[BoolText(D.PerformanceFreeze),BoolText(D.EnvFreeze)]));
+              Lines.Add(rsPrismPreviewSelector+DisplayPath(D.GeneratedSelector));
+            end;
+            Lines.Add(rsPrismPreviewPreserved);
+          end;
+      end;
+      if Tweaks then FPrismTweaksText.Lines.Assign(Lines)
+      else FPrismPreviewText.Lines.Assign(Lines);
     end;
-    FPrismPreviewText.Lines.Assign(Lines);
-    UpdatePrismContextPanel;
-  finally
-    Lines.Free;
-    if Assigned(autoSaveTimer) then autoSaveTimer.Enabled:=Pending;
+  finally Lines.Free; end;
+end;
+
+procedure Tgoverlayform.ShowPrismTweaks;
+var I:Integer;
+begin
+  if not IsPrismContext or not Assigned(FPrismTweaksPage) then Exit;
+  if goverlayPageControl.ActivePage<>FPrismTweaksPage then
+  begin
+    FPrismDeferredAutoSave:=Assigned(autoSaveTimer) and autoSaveTimer.Enabled;
+    if Assigned(autoSaveTimer) then autoSaveTimer.Enabled:=False;
   end;
+  SetNavActive(4);
+  for I:=0 to goverlayPageControl.PageCount-1 do
+    goverlayPageControl.Pages[I].TabVisible:=goverlayPageControl.Pages[I]=FPrismTweaksPage;
+  goverlayPageControl.ShowTabs:=True;
+  goverlayPageControl.ActivePage:=FPrismTweaksPage;
+  commandPanel.Visible:=False;
+  ApplyActiveProfileCapabilities;
+  UpdatePrismContextPanel;
 end;
 
 procedure Tgoverlayform.UpdatePrismContextPanel;
@@ -11141,6 +11230,19 @@ begin
     { Qt's inherited scroll-area stylesheet can override the LCL palette. }
     TQtWidget(FPrismPreviewText.Handle).StyleSheet :=
       'QTextEdit { background-color: rgb(24,30,44); color: rgb(255,255,255); }';
+    FPrismTweaksPage:=TTabSheet.Create(Self);
+    FPrismTweaksPage.PageControl:=goverlayPageControl;
+    FPrismTweaksPage.Caption:=rsPrismTweaksTitle;
+    FPrismTweaksPage.TabVisible:=False;
+    FPrismTweaksText:=TMemo.Create(Self);
+    FPrismTweaksText.Parent:=FPrismTweaksPage;
+    FPrismTweaksText.Align:=alClient;
+    FPrismTweaksText.BorderSpacing.Around:=12;
+    FPrismTweaksText.ReadOnly:=True; FPrismTweaksText.WordWrap:=True;
+    FPrismTweaksText.ScrollBars:=ssVertical;
+    TQtWidget(FPrismTweaksText.Handle).StyleSheet :=
+      'QTextEdit { background-color: rgb(24,30,44); color: rgb(255,255,255); }';
+    RenderPrismPreview;
   end;
   if not FPrismContextPanel.Visible then
     FPrismContentTopSpacing := goverlayPageControl.BorderSpacing.Top;
@@ -11158,8 +11260,14 @@ begin
   FPrismContextWarning.Hint := rsPrismLocalOnly;
   FPrismContextMessage.Caption := '';
   FPrismReviewButton.Enabled := FSelectedPrismInstance.StableKey=FActiveProfile.StableKey;
-  FPrismPreviewText.Visible := FPrismPreviewText.Text<>'';
+  FPrismCloneButton.Visible:=goverlayPageControl.ActivePage<>FPrismTweaksPage;
+  FPrismCloneButton.Enabled:=FPrismCloneButton.Visible;
+  if goverlayPageControl.ActivePage=FPrismTweaksPage then FPrismReviewButton.Top:=102
+  else FPrismReviewButton.Top:=134;
+  FPrismPreviewText.Visible := FPrismHasPreview and
+    (goverlayPageControl.ActivePage<>FPrismTweaksPage);
   if FPrismPreviewText.Visible then FPrismContextPanel.Height:=320
+  else if goverlayPageControl.ActivePage=FPrismTweaksPage then FPrismContextPanel.Height:=136
   else FPrismContextPanel.Height:=168;
   goverlayPageControl.BorderSpacing.Top := FPrismContextPanel.Height;
 end;
@@ -11264,12 +11372,13 @@ begin
   end;
   for I := 0 to High(FPrismControlStates) do
   begin
-    FPrismControlStates[I].Control.Visible := False;
-    FPrismControlStates[I].Control.Enabled := False;
+    FPrismControlStates[I].Control.Visible := FPrismControlStates[I].Control=FNavItems[4];
+    FPrismControlStates[I].Control.Enabled := FPrismControlStates[I].Control=FNavItems[4];
   end;
   commandPanel.Visible := False;
-  if Assigned(FFADock) then FFADock.UpdateForTab(False, False, False, True, False);
-  SetSaveBtnEnabled(True);
+  if Assigned(FFADock) then FFADock.UpdateForTab(False, False, False,
+    goverlayPageControl.ActivePage<>FPrismTweaksPage, False);
+  SetSaveBtnEnabled(goverlayPageControl.ActivePage<>FPrismTweaksPage);
 end;
 
 function Tgoverlayform.GetGameLogDir(const AGameName: string): string;
