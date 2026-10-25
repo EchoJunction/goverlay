@@ -748,6 +748,8 @@ type
     FNavIndicators:  array of TShape;    // left indicator bars
     FNavIcons:       array of TLabel;    // unicode icon labels
     FNavLabels:      array of TLabel;    // caption labels
+    FPrismGamesButton: TButton;
+    FGamesPrismOnly: Boolean;
     FNavActive:      Integer;            // index of active item (-1 = none)
     FNavHoveredIdx:  Integer;            // index of hovered item (-1 = none)
     FNavClickCBs:    array of TNotifyEvent; // click callbacks per item
@@ -1418,6 +1420,8 @@ type
     FNavIcons:       array of TLabel;    // unicode icon labels
     FNavImgIcons:    array of TImage;    // PNG image icons
     FNavLabels:      array of TLabel;    // caption labels
+    FPrismGamesButton: TButton;
+    FGamesPrismOnly: Boolean;
     FNavActive:      Integer;            // index of active item (-1 = none)
     FNavHoveredIdx:  Integer;            // index of hovered item (-1 = none)
     FNavClickCBs:    array of TNotifyEvent; // click callbacks per item
@@ -1597,6 +1601,8 @@ type
     function CloneGlobalMangoHudToPrism(ReplaceExisting: Boolean; out Error: string): Boolean;
     procedure PrismCloneGlobalClick(Sender: TObject);
     procedure PrismReviewChangesClick(Sender: TObject);
+    procedure PrismGamesClick(Sender: TObject);
+    procedure EnterGames(PrismOnly: Boolean);
     procedure RenderPrismPreview;
     procedure ShowPrismTweaks;
     function FlushPendingProfileEdits: Boolean;
@@ -5967,11 +5973,23 @@ saveBitbtn.Click;
 end;
 
 procedure Tgoverlayform.gamesLabelClick(Sender: TObject);
+begin
+  EnterGames(False);
+end;
+
+procedure Tgoverlayform.PrismGamesClick(Sender: TObject);
+begin
+  EnterGames(True);
+end;
+
+procedure Tgoverlayform.EnterGames(PrismOnly: Boolean);
 var
-  WasInGameMode: Boolean;
+  WasInGameMode, FilterChanged: Boolean;
   LastGameName: string;
 begin
   if not FlushPendingProfileEdits then Exit;
+  FilterChanged:=FGamesPrismOnly<>PrismOnly;
+  FGamesPrismOnly:=PrismOnly;
   ClearActiveProfileContext;
   WasInGameMode := FActiveGameName <> '';
   LastGameName := FActiveGameName;
@@ -6036,7 +6054,13 @@ begin
 
 
   // Floating dock configured for Games tab
-  if Assigned(FFADock) then FFADock.UpdateForTab(False, True, True, True, False, '+ Add Folder');
+  if Assigned(FFADock) then
+    FFADock.UpdateForTab(False,not PrismOnly,not PrismOnly,not PrismOnly,False,'+ Add Folder');
+  if FilterChanged or not FGamesLoaded then
+  begin
+    FGamesLoaded:=True;
+    TGamesTabHelper(FGamesHelper).RefreshGameCards;
+  end;
 end;
 
 procedure Tgoverlayform.mangohudLabelClick(Sender: TObject);

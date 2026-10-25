@@ -261,7 +261,7 @@ begin
   LocateButton.Name := 'PrismLocateRootButton'; LocateButton.Caption := rsPrismLocateRoot;
   LocateButton.SetBounds(0, 0, 250, 30); LocateButton.OnClick := @LocatePrismRootClick;
   ManageButton := TButton.Create(FPrismLibraryHeader); ManageButton.Parent := FPrismLibraryHeader;
-  ManageButton.Caption := rsPrismManageRoots; ManageButton.SetBounds(258, 0, 230, 30);
+  ManageButton.Name := 'PrismManageRootsButton'; ManageButton.Caption := rsPrismManageRoots; ManageButton.SetBounds(258, 0, 230, 30);
   ManageButton.OnClick := @ManagePrismRootsClick;
   L := TLabel.Create(FPrismLibraryHeader); L.Parent := FPrismLibraryHeader;
   L.Name := 'PrismRootsNotice'; L.AutoSize := False; L.WordWrap := True; L.ShowAccelChar := False;
@@ -1433,8 +1433,11 @@ begin
   ForceDirectories(NonSteamCacheDir);
 
   SetLength(DiscoveredGames, 0);
-  DiscoverSteamGames(DiscoveredGames);
-  DiscoverNonSteamGames(DiscoveredGames);
+  if not FGamesPrismOnly then
+  begin
+    DiscoverSteamGames(DiscoveredGames);
+    DiscoverNonSteamGames(DiscoveredGames);
+  end;
   PrismInput := Default(TPrismDiscoveryInput);
   PrismInput.HomeDir := ExcludeTrailingPathDelimiter(HomeDir);
   PrismInput.XdgDataHome := GetEnvironmentVariable('XDG_DATA_HOME');

@@ -16,6 +16,8 @@ type
     procedure SetUp; override;
     procedure TearDown; override;
   published
+    procedure TestPrismGamesSubmenuCatalog;
+    procedure TestPrismGamesSubmenuDirtyGuard;
     procedure TestPrismTweaksCategoriesAndRefresh;
     procedure TestPrismTweaksDirtyRoundTrip;
     procedure TestReadOnlyPreviewAndContext;
@@ -37,7 +39,7 @@ type
     procedure TestCloneSourceAliasRejectedBeforeDirtySave;
   end;
 implementation
-uses overlayunit, gamecontext, configmanager, test_isolation, SHA1, ExtCtrls, StdCtrls, prismroots, BaseUnix,
+uses overlayunit, gamecontext, configmanager, test_isolation, SHA1, ExtCtrls, StdCtrls, prismroots, BaseUnix, ComCtrls,
   Forms, prismpreview, prismsnapshot, mangohud_ui, games_tab, lossless_scaling_tab, reshade_tab, optiscaler_tab,
   tweaks_md3, Graphics, FileUtil, overlay_utils, Controls, LCLType, goverlay_strings;
 
@@ -325,6 +327,142 @@ begin
   AssertTrue('global save recovers after path repair', goverlayform.TrySaveMangoHudConfig);
   AssertFalse('successful save clears global dirty state', goverlayform.FProfileDirty);
   AssertTrue('Prism transition succeeds after recovery', goverlayform.SelectPrismInstance(A));
+end;
+
+procedure TPrismGuiTests.TestPrismGamesSubmenuCatalog;
+var Root,NativeCfg,OldNative,NonSteamFile,OldNonSteam,Manifest:string;
+  HadNative,HadNonSteam:Boolean; I,PrismCount,MixedCount,OldWidth,OldMin,OldHeight:Integer;
+  SteamCard,GogCard:TPanel; Header:TComponent; OldCollapsed:Boolean;
+  procedure FindLegacy;
+  var J:Integer; C:TPanel;
+  begin
+    SteamCard:=nil; GogCard:=nil;
+    for J:=0 to goverlayform.FCardPanels.Count-1 do
+    begin
+      C:=TPanel(goverlayform.FCardPanels[J]);
+      if C is TPrismCardPanel then Continue;
+      if Pos('Synthetic Steam submenu',C.Hint)>0 then SteamCard:=C;
+      if Pos('Synthetic GOG submenu',C.Hint)>0 then GogCard:=C;
+    end;
+  end;
+begin
+  Root:=GetUserDir+'.local/share/PrismLauncher'; NativeCfg:=Root+'/prismlauncher.cfg';
+  HadNative:=FileExists(NativeCfg); OldNative:=ReadText(NativeCfg);
+  NonSteamFile:=IncludeTrailingPathDelimiter(TConfigManager.GetGoverlayFolder)+'nonsteam_folders.txt';
+  HadNonSteam:=FileExists(NonSteamFile); OldNonSteam:=ReadText(NonSteamFile);
+  Manifest:=GetUserDir+'.local/share/Steam/steamapps/appmanifest_98765321.acf';
+  AssertFalse(FileExists(Manifest));
+  OldWidth:=goverlayform.Width; OldMin:=goverlayform.Constraints.MinWidth; OldHeight:=goverlayform.Height;
+  OldCollapsed:=goverlayform.FNavCollapsed;
+  try
+    Put(NativeCfg,'[General]'+LineEnding+'ConfigVersion=1.3'+LineEnding+'InstanceDir='+A.DataRoot+'/instances');
+    ForceDirectories(Base+'/legacy/Synthetic GOG submenu'); Put(NonSteamFile,Base+'/legacy');
+    Put(Manifest,'"AppState"'+LineEnding+'{'+LineEnding+'"appid" "98765321"'+LineEnding+
+      '"name" "Synthetic Steam submenu"'+LineEnding+'"installdir" "SyntheticSteamSubmenu"'+LineEnding+'}');
+    TGamesTabHelper(goverlayform.FGamesHelper).RefreshGameCards;
+    MixedCount:=goverlayform.FCardPanels.Count; AssertTrue(MixedCount>=4); FindLegacy;
+    AssertTrue(SteamCard<>nil); AssertTrue(GogCard<>nil);
+    AssertTrue(goverlayform.FPrismGamesButton.TabStop);
+    AssertTrue(Assigned(goverlayform.FPrismGamesButton.OnClick));
+    goverlayform.FGamesLoaded:=False;
+    goverlayform.FPrismGamesButton.Click;
+    AssertTrue('child first load completes',goverlayform.FGamesLoaded);
+    AssertTrue(goverlayform.FGamesPrismOnly); AssertEquals(0,goverlayform.FNavActive);
+    PrismCount:=0;
+    for I:=0 to goverlayform.FCardPanels.Count-1 do
+    begin AssertTrue(TObject(goverlayform.FCardPanels[I]) is TPrismCardPanel); Inc(PrismCount); end;
+    AssertEquals(2,PrismCount);
+    AssertTrue(fsBold in goverlayform.FPrismGamesButton.Font.Style);
+    Header:=goverlayform.FindComponent('PrismLibraryHeader'); AssertTrue(Header<>nil);
+    AssertTrue(Header.FindComponent('PrismLocateRootButton') is TButton);
+    AssertTrue(Header.FindComponent('PrismManageRootsButton') is TButton);
+    AssertTrue(goverlayform.FPrismGamesButton.Left>goverlayform.FNavItems[0].Left);
+    AssertTrue(goverlayform.FPrismGamesButton.Top>=goverlayform.FNavItems[0].Top+goverlayform.FNavItems[0].Height);
+    AssertTrue(goverlayform.FPrismGamesButton.Top+goverlayform.FPrismGamesButton.Height<=goverlayform.FNavItems[1].Top);
+    goverlayform.FNavCollapsed:=True; goverlayform.ApplyNavCollapsed;
+    AssertTrue(goverlayform.FPrismGamesButton.Visible);
+    AssertTrue(goverlayform.FPrismGamesButton.Left+goverlayform.FPrismGamesButton.Width<=goverlayform.goverlayPaintBox.Width);
+    AssertEquals(rsPrismLibraryHint,goverlayform.FPrismGamesButton.Hint);
+    goverlayform.FNavCollapsed:=False; goverlayform.ApplyNavCollapsed;
+    goverlayform.Constraints.MinWidth:=800; goverlayform.Width:=800;
+    goverlayform.Height:=goverlayform.Constraints.MinHeight; goverlayform.OnResize(goverlayform);
+    AssertTrue('nav leaves room for global/footer controls',goverlayform.FNavItems[4].Top+
+      goverlayform.FNavItems[4].Height<goverlayform.goverlayPaintBox.Top+goverlayform.goverlayPaintBox.Height-80);
+    AssertTrue(goverlayform.FPrismGamesButton.Left+goverlayform.FPrismGamesButton.Width<=goverlayform.goverlayPaintBox.Width);
+    goverlayform.gamesLabelClick(nil);
+    AssertFalse(goverlayform.FGamesPrismOnly); AssertEquals(MixedCount,goverlayform.FCardPanels.Count);
+    FindLegacy; AssertTrue(SteamCard<>nil); AssertTrue(GogCard<>nil);
+    goverlayform.GameCardClick(SteamCard);
+    AssertFalse(goverlayform.IsPrismContext); AssertFalse(goverlayform.FActiveGameIsNonSteam);
+    AssertEquals('Synthetic Steam submenu',goverlayform.FActiveGameName);
+    goverlayform.gamesLabelClick(nil); FindLegacy;
+    goverlayform.GameCardClick(GogCard); AssertTrue(goverlayform.FActiveGameIsNonSteam);
+    goverlayform.gamesLabelClick(nil); AssertEquals('',goverlayform.FActiveGameName);
+    ForceDirectories(Base+'/empty-prism');
+    Put(NativeCfg,'[General]'+LineEnding+'ConfigVersion=1.3'+LineEnding+'InstanceDir='+Base+'/empty-prism');
+    goverlayform.FPrismGamesButton.Click;
+    AssertEquals('empty child only',0,goverlayform.FCardPanels.Count);
+    Header:=goverlayform.FindComponent('PrismLibraryHeader'); AssertTrue(Header<>nil);
+    AssertTrue(TButton(Header.FindComponent('PrismLocateRootButton')).Enabled);
+    AssertTrue(TButton(Header.FindComponent('PrismManageRootsButton')).Enabled);
+    AssertTrue(goverlayform.FindComponent('PrismEmptyLibraryLabel')<>nil);
+    AssertSentinels;
+  finally
+    goverlayform.autoSaveTimer.Enabled:=False;
+    goverlayform.gamesLabelClick(nil);
+    goverlayform.Width:=OldWidth; goverlayform.Height:=OldHeight; goverlayform.Constraints.MinWidth:=OldMin;
+    goverlayform.FNavCollapsed:=OldCollapsed; goverlayform.ApplyNavCollapsed;
+    DeleteFile(Manifest);
+    if HadNative then Put(NativeCfg,OldNative) else DeleteFile(NativeCfg);
+    if HadNonSteam then Put(NonSteamFile,OldNonSteam) else DeleteFile(NonSteamFile);
+  end;
+end;
+
+procedure TPrismGuiTests.TestPrismGamesSubmenuDirtyGuard;
+var Before,ProfileBefore,Summary,Root,OldNative:string; HadNative:Boolean;
+  OldPage:TTabSheet; Card:TPrismCardPanel; I:Integer;
+begin
+  Root:=GetUserDir+'.local/share/PrismLauncher/prismlauncher.cfg';
+  HadNative:=FileExists(Root); OldNative:=ReadText(Root);
+  try
+    Put(Root,'[General]'+LineEnding+'ConfigVersion=1.3'+LineEnding+'InstanceDir='+A.DataRoot+'/instances');
+    TGamesTabHelper(goverlayform.FGamesHelper).RefreshGameCards; Card:=nil;
+    for I:=0 to goverlayform.FCardPanels.Count-1 do
+      if TObject(goverlayform.FCardPanels[I]) is TPrismCardPanel then Card:=TPrismCardPanel(goverlayform.FCardPanels[I]);
+    AssertTrue(Card<>nil); goverlayform.GameCardClick(Card); AssertTrue(goverlayform.IsPrismContext);
+    goverlayform.FPrismGamesButton.Click;
+    AssertTrue(goverlayform.FGamesPrismOnly); AssertFalse(goverlayform.IsPrismContext);
+    AssertTrue(goverlayform.SelectPrismInstance(A));
+    goverlayform.FLoadingConfig:=True; goverlayform.hudtitleEdit.Text:='Menu pending';
+    goverlayform.FLoadingConfig:=False; goverlayform.StartAutoSaveTimer;
+    goverlayform.tweaksLabelClick(nil); OldPage:=goverlayform.goverlayPageControl.ActivePage;
+    Before:=Snapshot(Base); ProfileBefore:=Snapshot(goverlayform.ActiveProfileConfigDir);
+    Summary:=goverlayform.FPrismTweaksText.Text;
+    goverlayform.gamesLabelClick(nil); goverlayform.FPrismGamesButton.Click;
+    AssertTrue(goverlayform.FGamesPrismOnly); AssertEquals(4,goverlayform.FNavActive);
+    AssertTrue(OldPage=goverlayform.goverlayPageControl.ActivePage);
+    AssertEquals(A.StableKey,goverlayform.FActiveProfile.StableKey);
+    AssertEquals(Summary,goverlayform.FPrismTweaksText.Text);
+    AssertTrue(goverlayform.FProfileDirty); AssertTrue(goverlayform.FPrismDeferredAutoSave);
+    AssertEquals(Before,Snapshot(Base)); AssertEquals(ProfileBefore,Snapshot(goverlayform.ActiveProfileConfigDir));
+    goverlayform.mangohudLabelClick(nil); AssertEquals('Menu pending',goverlayform.hudtitleEdit.Text);
+    goverlayform.autoSaveTimerTimer(nil); goverlayform.gamesLabelClick(nil);
+    AssertFalse(goverlayform.FGamesPrismOnly); AssertFalse(goverlayform.IsPrismContext);
+    AssertEquals('',goverlayform.FActiveGameName);
+    AssertTrue(goverlayform.SelectPrismInstance(A));
+    goverlayform.FLoadingConfig:=True; goverlayform.hudtitleEdit.Text:='Parent menu edit';
+    goverlayform.FLoadingConfig:=False; goverlayform.StartAutoSaveTimer;
+    goverlayform.tweaksLabelClick(nil);
+    Before:=Snapshot(Base); ProfileBefore:=Snapshot(goverlayform.ActiveProfileConfigDir);
+    goverlayform.FPrismGamesButton.Click;
+    AssertFalse('failed child entry preserves mixed filter',goverlayform.FGamesPrismOnly);
+    AssertEquals(4,goverlayform.FNavActive); AssertTrue(goverlayform.FProfileDirty);
+    AssertEquals(Before,Snapshot(Base)); AssertEquals(ProfileBefore,Snapshot(goverlayform.ActiveProfileConfigDir));
+    goverlayform.mangohudLabelClick(nil); AssertEquals('Parent menu edit',goverlayform.hudtitleEdit.Text);
+    goverlayform.autoSaveTimerTimer(nil); goverlayform.gamesLabelClick(nil); AssertSentinels;
+  finally
+    if HadNative then Put(Root,OldNative) else DeleteFile(Root);
+  end;
 end;
 
 procedure TPrismGuiTests.TestPrismTweaksCategoriesAndRefresh;
